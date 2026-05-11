@@ -6,6 +6,7 @@ import numpy as np
 from datetime import datetime, timezone
 
 import config_paths
+from database_utils import get_engine
 from logger_config import setup_logging
 
 
@@ -133,7 +134,10 @@ def load_clients_to_silver(df: pd.DataFrame, table_name: str = "clean_clients") 
     Rebuilds the Silver client table from scratch and bulk-inserts the
     validated DataFrame.  client_id is enforced as PRIMARY KEY.
     """
-    db_path = config_paths.get_db_path()
+
+    engine = get_engine()
+    if engine is None:
+        return False
 
     if df.empty:
         logger.warning("[LOAD] DataFrame is empty — nothing written to '%s'", table_name)
@@ -142,8 +146,6 @@ def load_clients_to_silver(df: pd.DataFrame, table_name: str = "clean_clients") 
     logger.info("[LOAD] Writing %d record(s) to '%s'", len(df), table_name)
 
     try:
-        engine = create_engine(f"sqlite:///{db_path}")
-
         with engine.begin() as conn:
             conn.execute(text(f"DROP TABLE IF EXISTS {table_name}"))
             conn.execute(text(f"""
@@ -167,7 +169,7 @@ def load_clients_to_silver(df: pd.DataFrame, table_name: str = "clean_clients") 
                     installation_cost_eur   REAL NOT NULL,
                     timezone                TEXT NOT NULL,
                     _source_file            TEXT NOT NULL,
-                    _ingested_at_utc        DATETIME NOT NULL
+                    _ingested_at_utc        TEXT NOT NULL
                 )
             """))
             df.to_sql(table_name, con=conn, if_exists="append", index=False)

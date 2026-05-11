@@ -3,11 +3,12 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
 
 import config_paths
+from database_utils import get_engine
 from logger_config import setup_logging
 
 
 logger = setup_logging()
-DB_PATH = config_paths.get_db_path()
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -128,7 +129,7 @@ def build_dim_client(engine: sqlalchemy.engine.Engine) -> int:
 def load_dim_client() -> int:
     """Module entry point. Returns the number of rows written (0 on failure)."""
     try:
-        engine = create_engine(f"sqlite:///{DB_PATH}")
+        engine = get_engine()
         return build_dim_client(engine)
     except Exception as exc:
         logger.critical("[ERROR] Critical failure in load_dim_client: %s", exc)

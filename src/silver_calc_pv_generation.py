@@ -1,9 +1,9 @@
 import pandas as pd
 from datetime import datetime, timezone
-import sqlite3
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 
-import config_paths
+# Importamos la conexión a Postgres y utilidades
+from database_utils import get_engine
 import engine_pv_physics as pvgen
 from logger_config import setup_logging
 
@@ -15,15 +15,13 @@ logger = setup_logging()
 # EXTRACT
 # ─────────────────────────────────────────────────────────────────────────────
 
-def get_merged_silver_data(
-    table_name_1: str = "clean_clients",
-    table_name_2: str = "clean_weather",
-) -> pd.DataFrame:
+def get_merged_silver_data(table_name_1: str = "clean_clients", table_name_2: str = "clean_weather") -> pd.DataFrame:
     """
     Joins clients and weather data for the active forecast window
     (unix_time >= now) and returns the merged DataFrame.
     """
-    db_path  = config_paths.get_db_path()
+    # Ahora usamos el engine de PostgreSQL
+    engine = get_engine()
     now_unix = int(datetime.now(timezone.utc).timestamp())
 
     logger.info(
@@ -32,8 +30,8 @@ def get_merged_silver_data(
     )
 
     try:
-        with sqlite3.connect(str(db_path)) as conn:
-            query = f"""
+        # Usamos el motor de Postgres para la consulta
+        query = text(f"""
             SELECT c.*,
                    w.unix_time,
                    w.forecast_time_utc,
@@ -48,9 +46,11 @@ def get_merged_silver_data(
                    w.is_daylight
             FROM {table_name_1} AS c
             INNER JOIN {table_name_2} AS w ON c.client_id = w.client_id
-            WHERE w.unix_time >= {now_unix}
-            """
-            df = pd.read_sql_query(query, conn)
+            WHERE w.unix_time >= :now_unix
+        """)
+        
+        with engine.connect() as conn:
+            df = pd.read_sql_query(query, conn, params={"now_unix": now_unix})
 
         logger.info("[EXTRACT] %d row(s) fetched from active forecast window", len(df))
         return df
@@ -129,11 +129,9 @@ def transform_pv_generation(df_raw: pd.DataFrame) -> pd.DataFrame:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def load_generation_to_silver(df: pd.DataFrame, table_name: str = "clean_calculations") -> bool:
-    """
-    Upserts PV calculation results into Silver using a composite PK
-    (client_id, unix_time) to guarantee idempotency.
-    """
-    db_path = config_paths.get_db_path()
+    engine = get_engine()
+    if engine is None:
+        return False
 
     if df.empty:
         logger.warning("[LOAD] DataFrame is empty — nothing written to '%s'", table_name)
@@ -143,39 +141,40 @@ def load_generation_to_silver(df: pd.DataFrame, table_name: str = "clean_calcula
 
     try:
         df_sql = df.copy()
-        if pd.api.types.is_datetime64_any_dtype(df_sql["forecast_time_utc"]):
-            df_sql["forecast_time_utc"] = df_sql["forecast_time_utc"].dt.strftime("%Y-%m-%d %H:%M:%S")
-
-        engine = create_engine(f"sqlite:///{db_path}")
-
         with engine.begin() as connection:
+            # 1. Aseguramos la tabla con la PK explícita para que el ON CONFLICT funcione
             connection.execute(text(f"""
                 CREATE TABLE IF NOT EXISTS {table_name} (
-                    client_id               TEXT    NOT NULL,
-                    unix_time               INTEGER NOT NULL,
-                    forecast_time_utc       TEXT    NOT NULL,
-                    pv_power_gen_kw         REAL,
-                    pv_performance_ratio    REAL,
-                    poa_wm2                 REAL,
-                    t_cell_celsius          REAL,
-                    power_con_kw            REAL,
-                    calculated_at_utc       TEXT    NOT NULL,
+                    client_id               TEXT NOT NULL,
+                    unix_time               BIGINT NOT NULL,
+                    forecast_time_utc       TEXT,
+                    pv_power_gen_kw         DOUBLE PRECISION,
+                    pv_performance_ratio    DOUBLE PRECISION,
+                    poa_wm2                 DOUBLE PRECISION,
+                    t_cell_celsius          DOUBLE PRECISION,
+                    power_con_kw            DOUBLE PRECISION,
+                    calculated_at_utc       TEXT,
                     PRIMARY KEY (client_id, unix_time)
-                )
+                );
             """))
 
-            columns      = list(df_sql.columns)
+            columns = list(df_sql.columns)
             placeholders = [f":{col}" for col in columns]
-            connection.execute(
-                text(f"""
-                    INSERT OR REPLACE INTO {table_name}
-                    ({', '.join(columns)})
-                    VALUES ({', '.join(placeholders)})
-                """),
-                df_sql.to_dict(orient="records"),
-            )
+            
+            # 2. Generamos el SET dinámico excluyendo las llaves primarias
+            update_cols = [c for c in columns if c not in ['client_id', 'unix_time']]
+            update_stmt = ", ".join([f"{col} = EXCLUDED.{col}" for col in update_cols])
 
-        logger.info("[LOAD] %d record(s) written to '%s'", len(df), table_name)
+            upsert_query = text(f"""
+                INSERT INTO {table_name} ({', '.join(columns)})
+                VALUES ({', '.join(placeholders)})
+                ON CONFLICT (client_id, unix_time) 
+                DO UPDATE SET {update_stmt}
+            """)
+
+            connection.execute(upsert_query, df_sql.to_dict(orient="records"))
+
+        logger.info("[LOAD] %d record(s) written to '%s' (Postgres)", len(df), table_name)
         return True
 
     except Exception as exc:

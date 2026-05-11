@@ -2,6 +2,7 @@ from sqlalchemy import create_engine, Table, Column, Integer, String, DateTime, 
 from datetime import datetime, timezone
 
 import config_paths
+from database_utils import get_engine
 from logger_config import setup_logging
 
 
@@ -37,8 +38,9 @@ def save_etl_metadata(status: str, duration: float, rows: int = 0, error: str = 
     )
 
     try:
-        db_path = config_paths.get_db_path()
-        engine  = create_engine(f"sqlite:///{db_path}")
+        
+        engine = get_engine()
+
         metadata.create_all(engine)
 
         with engine.connect() as conn:

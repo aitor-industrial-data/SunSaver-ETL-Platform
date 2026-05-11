@@ -5,6 +5,7 @@ import json
 from sqlalchemy import create_engine, text
 
 import config_paths
+from database_utils import get_engine
 from logger_config import setup_logging
 
 
@@ -119,7 +120,10 @@ def transform_prices_bronze_to_silver(df_raw: pd.DataFrame) -> pd.DataFrame:
 
 def load_ree_to_silver(df: pd.DataFrame, table_name: str = "clean_prices") -> bool:
     """Upserts validated price records into Silver using (datetime_utc, price_type) PK."""
-    db_path = config_paths.get_db_path()
+
+    engine = get_engine()
+    if engine is None:
+        return False
 
     if df.empty:
         logger.warning("[LOAD] DataFrame is empty — nothing written to '%s'", table_name)
@@ -132,9 +136,8 @@ def load_ree_to_silver(df: pd.DataFrame, table_name: str = "clean_prices") -> bo
         df_sql["datetime_utc"]     = pd.to_datetime(df_sql["datetime_utc"]).dt.strftime("%Y-%m-%d %H:%M:%S")
         df_sql["_ingested_at_utc"] = pd.to_datetime(df_sql["_ingested_at_utc"]).dt.strftime("%Y-%m-%d %H:%M:%S")
 
-        engine = create_engine(f"sqlite:///{db_path}")
-
         with engine.begin() as conn:
+            # 1. Crear la tabla (Sintaxis estándar, funciona en ambos)
             conn.execute(text(f"""
                 CREATE TABLE IF NOT EXISTS {table_name} (
                     unix_time           INTEGER NOT NULL,
@@ -147,14 +150,20 @@ def load_ree_to_silver(df: pd.DataFrame, table_name: str = "clean_prices") -> bo
                 )
             """))
 
+            # 2. Insertar con lógica de conflicto para Postgres
             columns = df_sql.columns.tolist()
-            conn.execute(
-                text(f"""
-                    INSERT OR REPLACE INTO {table_name} ({', '.join(columns)})
-                    VALUES ({', '.join(':' + c for c in columns)})
-                """),
-                df_sql.to_dict(orient="records"),
-            )
+            
+            # Construimos la parte del UPDATE: "col1 = EXCLUDED.col1, col2 = EXCLUDED.col2..."
+            update_stmt = ", ".join([f"{c} = EXCLUDED.{c}" for c in columns])
+
+            query = text(f"""
+                INSERT INTO {table_name} ({', '.join(columns)})
+                VALUES ({', '.join(':' + c for c in columns)})
+                ON CONFLICT (datetime_utc, price_type) 
+                DO UPDATE SET {update_stmt}
+            """)
+
+            conn.execute(query, df_sql.to_dict(orient="records"))
 
         logger.info("[LOAD] '%s' updated — %d record(s) upserted", table_name, len(df))
         return True

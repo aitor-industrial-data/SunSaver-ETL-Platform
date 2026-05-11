@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from sqlalchemy import create_engine, text
 
 import config_paths
+from database_utils import get_engine
 from logger_config import setup_logging
 
 
@@ -133,7 +134,10 @@ def load_weather_to_silver(df: pd.DataFrame, table_name: str = "clean_weather") 
     Upserts validated weather records into Silver using a composite PK
     (client_id, unix_time) to guarantee idempotency across forecast refreshes.
     """
-    db_path = config_paths.get_db_path()
+
+    engine = get_engine()
+    if engine is None:
+        return False
 
     if df.empty:
         logger.warning("[LOAD] DataFrame is empty — nothing written to '%s'", table_name)
@@ -145,8 +149,6 @@ def load_weather_to_silver(df: pd.DataFrame, table_name: str = "clean_weather") 
         df_sql = df.copy()
         df_sql["forecast_time_utc"] = df_sql["forecast_time_utc"].dt.strftime("%Y-%m-%d %H:%M:%S")
         df_sql["_ingested_at_utc"]  = df_sql["_ingested_at_utc"].dt.strftime("%Y-%m-%d %H:%M:%S")
-
-        engine = create_engine(f"sqlite:///{db_path}")
 
         with engine.begin() as conn:
             conn.execute(text(f"""
@@ -170,13 +172,23 @@ def load_weather_to_silver(df: pd.DataFrame, table_name: str = "clean_weather") 
             """))
 
             cols = list(df_sql.columns)
-            conn.execute(
-                text(f"""
-                    INSERT OR REPLACE INTO {table_name} ({', '.join(cols)})
-                    VALUES ({', '.join(':' + c for c in cols)})
-                """),
-                df_sql.to_dict(orient="records"),
-            )
+            
+            # Definimos las columnas que NO se deben actualizar (las PK)
+            pk_cols = ["client_id", "unix_time"]
+            # Columnas a actualizar: todas menos las PK
+            update_cols = [c for c in cols if c not in pk_cols]
+            
+            # Construimos la sentencia de actualización para Postgres
+            update_stmt = ", ".join([f"{c} = EXCLUDED.{c}" for c in update_cols])
+
+            query = text(f"""
+                INSERT INTO {table_name} ({', '.join(cols)})
+                VALUES ({', '.join(':' + c for c in cols)})
+                ON CONFLICT (client_id, unix_time) 
+                DO UPDATE SET {update_stmt}
+            """)
+
+            conn.execute(query, df_sql.to_dict(orient="records"))
 
         logger.info("[LOAD] '%s' updated — %d record(s) upserted", table_name, len(df))
         return True

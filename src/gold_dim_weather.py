@@ -3,11 +3,12 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
 
 import config_paths
+from database_utils import get_engine
 from logger_config import setup_logging
 
 
 logger  = setup_logging()
-DB_PATH = config_paths.get_db_path()
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -41,7 +42,7 @@ def build_dim_weather(engine: sqlalchemy.engine.Engine) -> int:
                     weather_id,
                     weather_main,
                     weather_description,
-                    STRFTIME('%Y-%m-%d %H:%M:%S', 'now') AS _loaded_at_utc
+                    TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS') AS _loaded_at_utc
                 FROM (
                     SELECT
                         weather_id,
@@ -55,7 +56,7 @@ def build_dim_weather(engine: sqlalchemy.engine.Engine) -> int:
                     FROM clean_weather
                     WHERE weather_id IS NOT NULL
                     GROUP BY weather_id, weather_main, weather_description
-                )
+                ) subquery
                 WHERE rn = 1
             """))
 
@@ -79,7 +80,7 @@ def build_dim_weather(engine: sqlalchemy.engine.Engine) -> int:
 def load_dim_weather() -> int:
     """Module entry point. Returns the number of rows written (0 on failure)."""
     try:
-        engine = create_engine(f"sqlite:///{DB_PATH}")
+        engine = get_engine()
         return build_dim_weather(engine)
     except Exception as exc:
         logger.critical("[ERROR] Critical failure in load_dim_weather: %s", exc)

@@ -4,11 +4,12 @@ from sqlalchemy.exc import SQLAlchemyError
 from datetime import datetime, timezone
 
 import config_paths
+from database_utils import get_engine
 from logger_config import setup_logging
 
 
 logger  = setup_logging()
-DB_PATH = config_paths.get_db_path()
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -30,7 +31,7 @@ def build_fact_energy_forecast(engine: sqlalchemy.engine.Engine) -> int:
 
     try:
         with engine.begin() as conn:
-            # Ensure table exists with full schema
+            # 1. Crear tabla con tus nombres exactos
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS gold_fact_energy_forecast (
                     client_id               TEXT    NOT NULL,
@@ -53,8 +54,14 @@ def build_fact_energy_forecast(engine: sqlalchemy.engine.Engine) -> int:
                 )
             """))
 
+            # 2. Insert con sintaxis PostgreSQL (ON CONFLICT) y nombres exactos
             result = conn.execute(text("""
-                INSERT OR REPLACE INTO gold_fact_energy_forecast
+                INSERT INTO gold_fact_energy_forecast (
+                    client_id, unix_time, forecast_time_utc, pv_power_gen_kw,
+                    pv_performance_ratio, poa_wm2, t_cell_celsius, power_consumption_kw,
+                    temp_celsius, humidity_pct, clouds_pct, rain_prob_norm,
+                    wind_speed_mps, weather_id, price_pvpc_eur_mwh, _loaded_at_utc
+                )
                 SELECT
                     c.client_id,
                     c.unix_time,
@@ -71,7 +78,7 @@ def build_fact_energy_forecast(engine: sqlalchemy.engine.Engine) -> int:
                     w.wind_speed_mps,
                     w.weather_id,
                     pvpc.price_euro_mwh             AS price_pvpc_eur_mwh,
-                    STRFTIME('%Y-%m-%d %H:%M:%S', 'now') AS _loaded_at_utc
+                    TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS') AS _loaded_at_utc
                 FROM clean_calculations c
                 LEFT JOIN clean_weather w
                     ON  w.client_id = c.client_id
@@ -80,11 +87,27 @@ def build_fact_energy_forecast(engine: sqlalchemy.engine.Engine) -> int:
                     ON  pvpc.unix_time  = c.unix_time
                     AND pvpc.price_type = 'PVPC'
                 WHERE c.unix_time >= :start_unix
+                ON CONFLICT (client_id, unix_time)
+                DO UPDATE SET
+                    forecast_time_utc    = EXCLUDED.forecast_time_utc,
+                    pv_power_gen_kw      = EXCLUDED.pv_power_gen_kw,
+                    pv_performance_ratio = EXCLUDED.pv_performance_ratio,
+                    poa_wm2              = EXCLUDED.poa_wm2,
+                    t_cell_celsius       = EXCLUDED.t_cell_celsius,
+                    power_consumption_kw = EXCLUDED.power_consumption_kw,
+                    temp_celsius         = EXCLUDED.temp_celsius,
+                    humidity_pct         = EXCLUDED.humidity_pct,
+                    clouds_pct           = EXCLUDED.clouds_pct,
+                    rain_prob_norm       = EXCLUDED.rain_prob_norm,
+                    wind_speed_mps       = EXCLUDED.wind_speed_mps,
+                    weather_id           = EXCLUDED.weather_id,
+                    price_pvpc_eur_mwh   = EXCLUDED.price_pvpc_eur_mwh,
+                    _loaded_at_utc       = EXCLUDED._loaded_at_utc
             """), {"start_unix": start_unix})
 
             rows_affected = result.rowcount
 
-            # Optimisation indexes — idempotent
+            # 3. Índices (Sintaxis estándar)
             conn.execute(text(
                 "CREATE INDEX IF NOT EXISTS idx_gold_fact_unix_time  "
                 "ON gold_fact_energy_forecast (unix_time)"
@@ -106,7 +129,7 @@ def build_fact_energy_forecast(engine: sqlalchemy.engine.Engine) -> int:
     except Exception as exc:
         logger.error("[ERROR] Unexpected error in build_fact_energy_forecast: %s", exc)
         raise
-
+        
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ORCHESTRATOR ENTRY POINT
@@ -115,9 +138,11 @@ def build_fact_energy_forecast(engine: sqlalchemy.engine.Engine) -> int:
 def load_fact_energy_forecast() -> int:
     """Module entry point. Returns the number of rows upserted (0 on failure)."""
     try:
-        engine = create_engine(f"sqlite:///{DB_PATH}")
+        engine = get_engine()
+
         with engine.connect() as conn:
-            conn.execute(text("PRAGMA foreign_keys = ON"))
+            pass 
+            
         return build_fact_energy_forecast(engine)
     except Exception as exc:
         logger.critical("[ERROR] Critical failure in load_fact_energy_forecast: %s", exc)
