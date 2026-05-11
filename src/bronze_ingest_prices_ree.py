@@ -23,6 +23,7 @@ def extract_raw_json_from_ree() -> Union[dict, bool]:
     Fetches tomorrow's PVPC prices (id=1001) from Red Eléctrica de España.
     Returns the raw API payload or False when data is not yet published.
     """
+    #today=datetime.now().strftime("%Y-%m-%d")
     tomorrow = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
 
     url = (
