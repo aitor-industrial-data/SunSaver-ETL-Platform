@@ -1,5 +1,8 @@
+import os
+import socket
 from sqlalchemy import create_engine, Table, Column, Integer, String, DateTime, Float, MetaData
 from datetime import datetime, timezone
+from dotenv import load_dotenv
 
 from database_utils import get_engine
 from logger_config import setup_logging
@@ -7,17 +10,20 @@ from logger_config import setup_logging
 
 logger = setup_logging()
 
+load_dotenv()
+
 metadata      = MetaData()
 metadata_table = Table(
     "etl_metadata", metadata,
-    Column("id",              Integer,  primary_key=True),
-    Column("pipeline_name",   String),
-    Column("status",          String),
-    Column("duration_seconds",Float),
-    Column("rows_affected",   Integer),
-    Column("error_message",   String),
-    Column("env",             String),
-    Column("executed_at",     DateTime, default=datetime.now(timezone.utc)),
+    Column("id",                         Integer,  primary_key=True),
+    Column("pipeline_name",              String),
+    Column("status",                     String),
+    Column("duration_seconds",           Float),
+    Column("rows_affected",              Integer),
+    Column("error_message",              String),
+    Column("env",                        String),
+    Column("_executed_by",             String),
+    Column("_executed_at",               DateTime, default=datetime.now(timezone.utc)),
 )
 
 
@@ -36,8 +42,11 @@ def save_etl_metadata(status: str, duration: float, rows: int = 0, error: str = 
         status, duration, rows,
     )
 
+    
+    
+
     try:
-        
+        host_name = socket.gethostname()
         engine = get_engine()
 
         metadata.create_all(engine)
@@ -50,6 +59,7 @@ def save_etl_metadata(status: str, duration: float, rows: int = 0, error: str = 
                 rows_affected   = rows,
                 error_message   = error,
                 env             = "DEV",
+                _executed_by    = host_name
             ))
             conn.commit()
 

@@ -147,9 +147,10 @@ def run_pipeline(from_stage: int = 1, dry_run: bool = False) -> bool:
         if steps_ko > 0 and "FAILED" not in pipeline_status:
             pipeline_status = "PARTIAL SUCCESS"
 
+
         if not dry_run:
             try:
-                # Ahora 'rows' guarda el recuento total acumulado de registros procesados
+                
                 save_etl_metadata(
                     status=pipeline_status, 
                     duration=round(elapsed_total, 2),
