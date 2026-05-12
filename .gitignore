@@ -82,3 +82,13 @@ logs/
 secrets.txt
 *.pem
 *.key
+
+### 8. AIRFLOW & DOCKER ESPECÍFICO
+# Archivos de base de datos interna de Airflow (si usas SQLite fuera de Docker)
+**/airflow.db
+**/airflow.cfg
+# EXCEPTO si quieres subir una configuración base, pero normalmente se ignora
+# Archivos de ID de procesos
+*.pid
+# Archivos de metadata de Docker
+.dockerignore
