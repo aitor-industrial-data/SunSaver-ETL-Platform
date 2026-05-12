@@ -1,9 +1,8 @@
 import sqlalchemy
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from datetime import datetime, timezone
 
-import config_paths
 from database_utils import get_engine
 from logger_config import setup_logging
 

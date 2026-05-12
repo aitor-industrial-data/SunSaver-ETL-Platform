@@ -1,7 +1,6 @@
 from sqlalchemy import create_engine, Table, Column, Integer, String, DateTime, Float, MetaData
 from datetime import datetime, timezone
 
-import config_paths
 from database_utils import get_engine
 from logger_config import setup_logging
 

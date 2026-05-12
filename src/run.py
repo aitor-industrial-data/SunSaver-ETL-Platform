@@ -8,7 +8,7 @@ import sys
 import time
 import argparse
 from datetime import datetime, timezone
-from typing import Callable, Tuple, Union
+from typing import Callable, Tuple
 
 # ── Módulos del proyecto ─────────────────────────────────────────────────────
 from logger_config import setup_logging

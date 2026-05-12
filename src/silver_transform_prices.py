@@ -2,7 +2,7 @@ import pandas as pd
 import os
 from datetime import datetime, timezone
 import json
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 
 import config_paths
 from database_utils import get_engine

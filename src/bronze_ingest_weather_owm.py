@@ -1,7 +1,6 @@
 import os
 import json
 import stat
-import sqlite3
 import requests
 import pandas as pd
 from dotenv import load_dotenv
@@ -9,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Dict, Any, Optional
 
 import config_paths
+from database_utils import get_engine
 from logger_config import setup_logging
 
 
@@ -129,13 +129,21 @@ def extract_openweather(client_table: str = "clean_clients") -> int:
         logger.error("[EXTRACT] WEATHER_API_KEY is not set — check .env")
         return False
 
-    db_path = config_paths.get_db_path()
+    engine = get_engine()
+    if engine is None:
+        return False
 
     try:
-        with sqlite3.connect(str(db_path)) as conn:
-            df_clients = pd.read_sql(
-                f"SELECT client_id, latitude, longitude FROM {client_table}", conn
-            )
+        # 2. Usamos el engine directamente con Pandas
+        # SQLAlchemy gestiona la apertura y cierre de la conexión automáticamente
+        query = f"SELECT client_id, latitude, longitude FROM {client_table}"
+        
+        df_clients = pd.read_sql(query, con=engine)
+        
+        print("Datos extraídos con éxito mediante SQLAlchemy.")
+
+    except Exception as e:
+        print(f"Error en la conexión Cloud/Local: {e}")
     except Exception as exc:
         logger.error("[EXTRACT] Failed to read clients from '%s': %s", client_table, exc)
         return 0

@@ -1,7 +1,7 @@
 import pandas as pd
 import os
 import json
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 import numpy as np
 from datetime import datetime, timezone
 

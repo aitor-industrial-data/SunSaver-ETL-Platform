@@ -4,7 +4,6 @@ from sqlalchemy.exc import SQLAlchemyError
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
-import config_paths
 from database_utils import get_engine
 from logger_config import setup_logging
 

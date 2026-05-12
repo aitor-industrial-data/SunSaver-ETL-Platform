@@ -2,7 +2,7 @@ import pandas as pd
 import os
 import json
 from datetime import datetime, timezone
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 
 import config_paths
 from database_utils import get_engine
@@ -237,7 +237,8 @@ def transform_openweather() -> int:
         fname     = os.path.basename(path_file)
 
         logger.info("[EXTRACT] Processing client_id=%s — file: %s", client_id, fname)
-
+        print(path_file)
+        print(client_id)
         try:
             df_raw = extract_raw_weather_from_json(path_file, client_id)
             if df_raw.empty:
