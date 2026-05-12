@@ -134,16 +134,10 @@ def extract_openweather(client_table: str = "clean_clients") -> int:
         return False
 
     try:
-        # 2. Usamos el engine directamente con Pandas
-        # SQLAlchemy gestiona la apertura y cierre de la conexión automáticamente
-        query = f"SELECT client_id, latitude, longitude FROM {client_table}"
         
+        query = f"SELECT client_id, latitude, longitude FROM {client_table}"
         df_clients = pd.read_sql(query, con=engine)
         
-        print("Datos extraídos con éxito mediante SQLAlchemy.")
-
-    except Exception as e:
-        print(f"Error en la conexión Cloud/Local: {e}")
     except Exception as exc:
         logger.error("[EXTRACT] Failed to read clients from '%s': %s", client_table, exc)
         return 0
