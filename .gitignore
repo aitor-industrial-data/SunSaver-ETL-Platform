@@ -77,6 +77,7 @@ logs/
 ### 7. SEGURIDAD (FUNDAMENTAL)
 # Nunca subir claves o variables de entorno
 .env
+**/ .env
 .secrets
 secrets.txt
 *.pem
