@@ -1,92 +1,59 @@
-import pandas as pd
-import os
 import json
-from sqlalchemy import text
-import numpy as np
+import os
 from datetime import datetime, timezone
+
+import numpy as np
+import pandas as pd
+from dotenv import load_dotenv
+from sqlalchemy import text
 
 import config_paths
 from database_utils import get_engine
 from logger_config import setup_logging
 
-
+load_dotenv()
 logger = setup_logging()
 
+MANIFEST_KEY_S3 = "bronze/manifests/_process_manifest_clients.json"
 
-# ─────────────────────────────────────────────────────────────────────────────
-# MANIFEST HELPERS
-# ─────────────────────────────────────────────────────────────────────────────
 
-MANIFEST_KEY_S3    = f"bronze/manifests/_process_manifest_clients.json"
-MANIFEST_PATH_LOCAL = None   # se calcula en runtime
-
+# ── MANIFEST ──────────────────────────────────────────────────────────────────
 
 def _load_manifest() -> list:
-    if os.getenv("LOCAL_DEV"):
-        bronze_dir    = config_paths.get_bronze_path()
-        manifest_path = os.path.join(bronze_dir, "_process_manifest_clients.json")
-        if not os.path.exists(manifest_path):
-            return []
-        with open(manifest_path, "r", encoding="utf-8") as fh:
-            return json.load(fh)
-    else:
-        try:
-            return config_paths.read_json_from_s3(MANIFEST_KEY_S3)
-        except Exception:
-            return []
+    try:
+        return config_paths.read_json_from_s3(MANIFEST_KEY_S3)
+    except Exception:
+        return []
 
 
 def _save_manifest(tasks: list) -> None:
-    if os.getenv("LOCAL_DEV"):
-        bronze_dir    = config_paths.get_bronze_path()
-        manifest_path = os.path.join(bronze_dir, "_process_manifest_clients.json")
-        with open(manifest_path, "w", encoding="utf-8") as fh:
-            json.dump(tasks, fh, indent=4, ensure_ascii=False)
-    else:
-        config_paths.write_json_to_s3(tasks, MANIFEST_KEY_S3)
+    config_paths.write_json_to_s3(tasks, MANIFEST_KEY_S3)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# EXTRACT (Bronze → memory)
-# ─────────────────────────────────────────────────────────────────────────────
+# ── EXTRACT ───────────────────────────────────────────────────────────────────
 
 def extract_clients_from_json(file_path: str) -> pd.DataFrame:
-    """
-    Lee un fichero Bronze de clientes (desde S3 o disco local).
-    file_path es una clave S3 en AWS o una ruta local en LOCAL_DEV.
-    """
     try:
-        if os.getenv("LOCAL_DEV"):
-            with open(file_path, "r", encoding="utf-8") as fh:
-                raw = json.load(fh)
-            source_name = os.path.basename(file_path)
-        else:
-            raw         = config_paths.read_json_from_s3(file_path)
-            source_name = file_path.split("/")[-1]
-
+        raw         = config_paths.read_json_from_s3(file_path)
+        source_name = file_path.split("/")[-1]
         df = pd.DataFrame(raw)
         df["_ingested_at_utc"] = datetime.now(timezone.utc)
         df["_source_file"]     = source_name
-
-        logger.debug("[EXTRACT] %d raw row(s) loaded from %s", len(df), source_name)
+        logger.debug("[EXTRACT] %d filas leídas de %s", len(df), source_name)
         return df
-
     except Exception as exc:
-        logger.error("[EXTRACT] Failed to read Bronze file %s: %s", file_path, exc)
+        logger.error("[EXTRACT] Error leyendo %s: %s", file_path, exc)
         return pd.DataFrame()
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# TRANSFORM
-# ─────────────────────────────────────────────────────────────────────────────
+# ── TRANSFORM ─────────────────────────────────────────────────────────────────
 
 def transform_clients_bronze_to_silver(df_raw: pd.DataFrame) -> pd.DataFrame:
     if df_raw.empty:
-        logger.warning("[TRANSFORM] Input DataFrame is empty — nothing to transform")
+        logger.warning("[TRANSFORM] DataFrame vacío — nada que transformar")
         return pd.DataFrame()
 
-    logger.info("[TRANSFORM] Transforming %d raw client record(s)", len(df_raw))
-
+    logger.info("[TRANSFORM] Transformando %d registro(s) raw", len(df_raw))
     try:
         df = df_raw.copy()
 
@@ -99,7 +66,6 @@ def transform_clients_bronze_to_silver(df_raw: pd.DataFrame) -> pd.DataFrame:
             "client_id", "name", "description", "panel_type",
             "mounting", "timezone", "_ingested_at_utc",
         ]
-
         for col in numeric_cols:
             df[col] = pd.to_numeric(df[col], errors="coerce")
         for col in text_cols:
@@ -110,9 +76,8 @@ def transform_clients_bronze_to_silver(df_raw: pd.DataFrame) -> pd.DataFrame:
         critical = ["client_id", "name", "latitude", "longitude", "pv_peak_power_kw", "_ingested_at_utc"]
         before   = len(df)
         df       = df.dropna(subset=critical)
-        dropped  = before - len(df)
-        if dropped:
-            logger.warning("[TRANSFORM] %d record(s) dropped — missing critical fields", dropped)
+        if before - len(df):
+            logger.warning("[TRANSFORM] %d registro(s) descartados por campos críticos nulos", before - len(df))
 
         df["latitude"]  = df["latitude"].round(6)
         df["longitude"] = df["longitude"].round(6)
@@ -124,14 +89,13 @@ def transform_clients_bronze_to_silver(df_raw: pd.DataFrame) -> pd.DataFrame:
         df.loc[~df["loss_pct"].between(0, 90),    "loss_pct"]    = 14.0
         df.loc[~df["soc_min_pct"].between(0, 90), "soc_min_pct"] = 20.0
         df.loc[df["efficiency"].notna() & ~df["efficiency"].between(0, 1), "efficiency"] = 0.15
-
         df = df[df["pv_peak_power_kw"] > 0]
         for col in ["panel_area_m2", "battery_capacity_kwh", "installation_cost_eur"]:
             df.loc[df[col] < 0, col] = 0
 
-        df = df.sort_values("_ingested_at_utc", ascending=False)
-        df = df.drop_duplicates(subset=["client_id"], keep="first")
-
+        df = df.sort_values("_ingested_at_utc", ascending=False).drop_duplicates(
+            subset=["client_id"], keep="first"
+        )
         df = df.fillna({
             "description":           "unknown",
             "nominal_load_kw":       df["pv_peak_power_kw"] * 1.3,
@@ -149,28 +113,24 @@ def transform_clients_bronze_to_silver(df_raw: pd.DataFrame) -> pd.DataFrame:
         })
 
         df = df.reset_index(drop=True)
-        logger.info("[TRANSFORM] Silver-quality records produced: %d", len(df))
+        logger.info("[TRANSFORM] Registros Silver producidos: %d", len(df))
         return df
 
     except Exception as exc:
-        logger.error("[TRANSFORM] Transformation failed: %s", exc)
+        logger.error("[TRANSFORM] Transformación fallida: %s", exc)
         return pd.DataFrame()
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# LOAD → SILVER
-# ─────────────────────────────────────────────────────────────────────────────
+# ── LOAD → SILVER ─────────────────────────────────────────────────────────────
 
 def load_clients_to_silver(df: pd.DataFrame, table_name: str = "clean_clients") -> bool:
     engine = get_engine()
     if engine is None:
         return False
     if df.empty:
-        logger.warning("[LOAD] DataFrame vacío — nada escrito en '%s'", table_name)
         return False
 
-    logger.info("[LOAD] Writing %d record(s) to '%s'", len(df), table_name)
-
+    logger.info("[LOAD] Escribiendo %d registro(s) en '%s'", len(df), table_name)
     try:
         with engine.begin() as conn:
             conn.execute(text(f"DROP TABLE IF EXISTS {table_name}"))
@@ -199,18 +159,14 @@ def load_clients_to_silver(df: pd.DataFrame, table_name: str = "clean_clients") 
                 )
             """))
             df.to_sql(table_name, con=conn, if_exists="append", index=False)
-
-        logger.info("[LOAD] '%s' rebuilt — %d record(s) inserted", table_name, len(df))
+        logger.info("[LOAD] '%s' reconstruida — %d registro(s)", table_name, len(df))
         return True
-
     except Exception as exc:
-        logger.error("[LOAD] Failed to write to '%s': %s", table_name, exc)
+        logger.error("[LOAD] Error escribiendo '%s': %s", table_name, exc)
         return False
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# ORCHESTRATOR ENTRY POINT
-# ─────────────────────────────────────────────────────────────────────────────
+# ── ENTRY POINT ───────────────────────────────────────────────────────────────
 
 def transform_clients() -> int:
     logger.info("[INIT] ── transform_clients starting ──────────────────────────")
@@ -219,30 +175,21 @@ def transform_clients() -> int:
     actionable = [t for t in all_tasks if t["status"] in ("pending", "error")]
 
     if not actionable:
-        logger.info("[INIT] All manifest tasks already processed — nothing to do")
+        logger.info("[INIT] Todas las tareas ya procesadas")
         return 0
-
-    pending_n = sum(1 for t in actionable if t["status"] == "pending")
-    retry_n   = sum(1 for t in actionable if t["status"] == "error")
-    logger.info("[INIT] Tasks to process — new: %d | retries: %d", pending_n, retry_n)
 
     session_rows = session_ok = session_err = 0
 
     for task in actionable:
         path_file = task["path"]
         fname     = path_file.split("/")[-1]
-
-        logger.info("[EXTRACT] Processing Bronze file: %s", fname)
-
         try:
             df_raw = extract_clients_from_json(path_file)
             if df_raw.empty:
-                raise ValueError("Bronze file is empty or unreadable")
-
+                raise ValueError("Bronze file vacío o ilegible")
             df_silver = transform_clients_bronze_to_silver(df_raw)
             if df_silver.empty:
-                raise ValueError("Transformation produced an empty DataFrame")
-
+                raise ValueError("Transformación produjo DataFrame vacío")
             rows = len(df_silver)
             if load_clients_to_silver(df_silver):
                 task.update({"status": "success", "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")})
@@ -250,27 +197,18 @@ def transform_clients() -> int:
                 session_rows += rows
                 session_ok   += 1
             else:
-                raise ValueError("Silver load returned False")
-
+                raise ValueError("Silver load devolvió False")
         except Exception as exc:
-            task.update({
-                "status":     "error",
-                "error":      str(exc),
-                "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
-            })
+            task.update({"status": "error", "error": str(exc),
+                         "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")})
             session_err += 1
-            logger.error("[ERROR] %s failed: %s", fname, exc)
+            logger.error("[ERROR] %s: %s", fname, exc)
 
     _save_manifest(all_tasks)
-
-    logger.info(
-        "[DONE] transform_clients — ok: %d | errors: %d | rows: %d",
-        session_ok, session_err, session_rows,
-    )
+    logger.info("[DONE] transform_clients — ok: %d | errores: %d | filas: %d",
+                session_ok, session_err, session_rows)
     return session_rows
 
-
-# ─────────────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     transform_clients()

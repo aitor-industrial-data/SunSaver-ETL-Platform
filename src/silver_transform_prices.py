@@ -1,91 +1,61 @@
-import pandas as pd
+import json
 import os
 from datetime import datetime, timezone
-import json
+
+import pandas as pd
+from dotenv import load_dotenv
 from sqlalchemy import text
 
 import config_paths
 from database_utils import get_engine
 from logger_config import setup_logging
 
-
+load_dotenv()
 logger = setup_logging()
 
 MANIFEST_KEY_S3 = "bronze/manifests/_process_manifest_ree.json"
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# MANIFEST HELPERS
-# ─────────────────────────────────────────────────────────────────────────────
+# ── MANIFEST ──────────────────────────────────────────────────────────────────
 
 def _load_manifest() -> list:
-    if os.getenv("LOCAL_DEV"):
-        bronze_dir    = config_paths.get_bronze_path()
-        manifest_path = os.path.join(bronze_dir, "_process_manifest_ree.json")
-        if not os.path.exists(manifest_path):
-            return []
-        with open(manifest_path, "r", encoding="utf-8") as fh:
-            return json.load(fh)
-    else:
-        try:
-            return config_paths.read_json_from_s3(MANIFEST_KEY_S3)
-        except Exception:
-            return []
+    try:
+        return config_paths.read_json_from_s3(MANIFEST_KEY_S3)
+    except Exception:
+        return []
 
 
 def _save_manifest(tasks: list) -> None:
-    if os.getenv("LOCAL_DEV"):
-        bronze_dir    = config_paths.get_bronze_path()
-        manifest_path = os.path.join(bronze_dir, "_process_manifest_ree.json")
-        with open(manifest_path, "w", encoding="utf-8") as fh:
-            json.dump(tasks, fh, indent=4, ensure_ascii=False)
-    else:
-        config_paths.write_json_to_s3(tasks, MANIFEST_KEY_S3)
+    config_paths.write_json_to_s3(tasks, MANIFEST_KEY_S3)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# EXTRACT
-# ─────────────────────────────────────────────────────────────────────────────
+# ── EXTRACT ───────────────────────────────────────────────────────────────────
 
 def extract_raw_ree_from_json(file_path: str) -> pd.DataFrame:
     try:
-        if os.getenv("LOCAL_DEV"):
-            with open(file_path, "r", encoding="utf-8") as fh:
-                raw = json.load(fh)
-            source_name = os.path.basename(file_path)
-        else:
-            raw         = config_paths.read_json_from_s3(file_path)
-            source_name = file_path.split("/")[-1]
-
-        df = pd.DataFrame([{
+        raw         = config_paths.read_json_from_s3(file_path)
+        source_name = file_path.split("/")[-1]
+        return pd.DataFrame([{
             "_ingested_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
             "_source_file":     source_name,
             "raw_data":         json.dumps(raw),
         }])
-        return df
-
     except Exception as exc:
-        logger.error("[EXTRACT] Failed to read Bronze file %s: %s", file_path, exc)
+        logger.error("[EXTRACT] Error leyendo %s: %s", file_path, exc)
         return pd.DataFrame()
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# TRANSFORM
-# ─────────────────────────────────────────────────────────────────────────────
+# ── TRANSFORM ─────────────────────────────────────────────────────────────────
 
 def transform_prices_bronze_to_silver(df_raw: pd.DataFrame) -> pd.DataFrame:
     if df_raw.empty:
         return pd.DataFrame()
 
-    logger.info("[TRANSFORM] Parsing and cleaning REE price data")
-
+    logger.info("[TRANSFORM] Parseando y limpiando precios REE")
     try:
         records = []
         for _, row in df_raw.iterrows():
             raw_json = json.loads(row["raw_data"])
-            source   = row["_source_file"]
-            ingested = row["_ingested_at_utc"]
-
             for series in raw_json.get("included", []):
                 price_type = series.get("type")
                 for v in series.get("attributes", {}).get("values", []):
@@ -93,8 +63,8 @@ def transform_prices_bronze_to_silver(df_raw: pd.DataFrame) -> pd.DataFrame:
                         "price_type":       price_type,
                         "datetime_utc":     v.get("datetime"),
                         "price_euro_mwh":   float(v.get("value")),
-                        "_source_file":     source,
-                        "_ingested_at_utc": ingested,
+                        "_source_file":     row["_source_file"],
+                        "_ingested_at_utc": row["_ingested_at_utc"],
                     })
 
         df = pd.DataFrame(records)
@@ -104,15 +74,16 @@ def transform_prices_bronze_to_silver(df_raw: pd.DataFrame) -> pd.DataFrame:
         df["datetime_utc"] = pd.to_datetime(df["datetime_utc"], errors="coerce", utc=True)
         df = df.dropna(subset=["datetime_utc"])
 
-        lower, upper = -100, 2000
-        outlier_mask = (df["price_euro_mwh"] < lower) | (df["price_euro_mwh"] > upper)
+        outlier_mask = (df["price_euro_mwh"] < -100) | (df["price_euro_mwh"] > 2000)
         if outlier_mask.sum():
             logger.warning("[TRANSFORM] %d outlier(s) filtrados", outlier_mask.sum())
             df = df[~outlier_mask]
 
-        df = df.sort_values("_ingested_at_utc", ascending=False)
-        df = df.drop_duplicates(subset=["price_type", "datetime_utc"], keep="first")
-        df = df.sort_values(["price_type", "datetime_utc"]).reset_index(drop=True)
+        df = (df.sort_values("_ingested_at_utc", ascending=False)
+                .drop_duplicates(subset=["price_type", "datetime_utc"], keep="first")
+                .sort_values(["price_type", "datetime_utc"])
+                .reset_index(drop=True))
+
         df["price_euro_mwh"] = df.groupby("price_type")["price_euro_mwh"].transform(
             lambda x: x.interpolate(method="linear").ffill().bfill().round(4)
         )
@@ -121,17 +92,15 @@ def transform_prices_bronze_to_silver(df_raw: pd.DataFrame) -> pd.DataFrame:
             .astype("datetime64[s]").astype("int64")
         )
 
-        logger.info("[TRANSFORM] %d Silver price record(s) produced", len(df))
+        logger.info("[TRANSFORM] %d registros Silver de precios producidos", len(df))
         return df
 
     except Exception as exc:
-        logger.error("[TRANSFORM] Price transformation failed: %s", exc)
+        logger.error("[TRANSFORM] Transformación de precios fallida: %s", exc)
         return pd.DataFrame()
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# LOAD → SILVER
-# ─────────────────────────────────────────────────────────────────────────────
+# ── LOAD → SILVER ─────────────────────────────────────────────────────────────
 
 def load_ree_to_silver(df: pd.DataFrame, table_name: str = "clean_prices") -> bool:
     engine = get_engine()
@@ -140,8 +109,7 @@ def load_ree_to_silver(df: pd.DataFrame, table_name: str = "clean_prices") -> bo
     if df.empty:
         return False
 
-    logger.info("[LOAD] Upserting %d price record(s) into '%s'", len(df), table_name)
-
+    logger.info("[LOAD] Upsertando %d registro(s) en '%s'", len(df), table_name)
     try:
         df_sql = df.copy()
         df_sql["datetime_utc"]     = pd.to_datetime(df_sql["datetime_utc"]).dt.strftime("%Y-%m-%d %H:%M:%S")
@@ -155,30 +123,26 @@ def load_ree_to_silver(df: pd.DataFrame, table_name: str = "clean_prices") -> bo
                     price_type          TEXT    NOT NULL,
                     price_euro_mwh      REAL,
                     _source_file        TEXT,
-                    _ingested_at_utc    TEXT    NOT NULL,
+                    _ingested_at_utc    TEXT NOT NULL,
                     PRIMARY KEY (datetime_utc, price_type)
                 )
             """))
-            columns     = df_sql.columns.tolist()
-            update_stmt = ", ".join([f"{c} = EXCLUDED.{c}" for c in columns])
+            cols        = df_sql.columns.tolist()
+            update_stmt = ", ".join([f"{c} = EXCLUDED.{c}" for c in cols])
             conn.execute(text(f"""
-                INSERT INTO {table_name} ({', '.join(columns)})
-                VALUES ({', '.join(':' + c for c in columns)})
-                ON CONFLICT (datetime_utc, price_type)
-                DO UPDATE SET {update_stmt}
+                INSERT INTO {table_name} ({', '.join(cols)})
+                VALUES ({', '.join(':' + c for c in cols)})
+                ON CONFLICT (datetime_utc, price_type) DO UPDATE SET {update_stmt}
             """), df_sql.to_dict(orient="records"))
 
-        logger.info("[LOAD] '%s' updated — %d record(s) upserted", table_name, len(df))
+        logger.info("[LOAD] '%s' actualizada — %d registro(s)", table_name, len(df))
         return True
-
     except Exception as exc:
-        logger.error("[LOAD] Failed to write to '%s': %s", table_name, exc)
+        logger.error("[LOAD] Error escribiendo '%s': %s", table_name, exc)
         return False
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# ORCHESTRATOR ENTRY POINT
-# ─────────────────────────────────────────────────────────────────────────────
+# ── ENTRY POINT ───────────────────────────────────────────────────────────────
 
 def transform_energy_prices() -> int:
     logger.info("[INIT] ── transform_energy_prices starting ──────────────────")
@@ -187,7 +151,7 @@ def transform_energy_prices() -> int:
     actionable = [t for t in all_tasks if t["status"] in ("pending", "error")]
 
     if not actionable:
-        logger.info("[INIT] All REE manifest tasks already processed")
+        logger.info("[INIT] Todas las tareas REE ya procesadas")
         return 0
 
     session_rows = session_ok = session_err = 0
@@ -195,16 +159,13 @@ def transform_energy_prices() -> int:
     for task in actionable:
         path_file = task["path"]
         fname     = path_file.split("/")[-1]
-
         try:
             df_raw = extract_raw_ree_from_json(path_file)
             if df_raw.empty:
-                raise ValueError("Bronze file empty or unreadable")
-
+                raise ValueError("Bronze file vacío o ilegible")
             df_silver = transform_prices_bronze_to_silver(df_raw)
             if df_silver.empty:
-                raise ValueError("Transformation produced empty DataFrame")
-
+                raise ValueError("Transformación produjo DataFrame vacío")
             rows = len(df_silver)
             if load_ree_to_silver(df_silver):
                 task.update({"status": "success", "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")})
@@ -212,17 +173,15 @@ def transform_energy_prices() -> int:
                 session_rows += rows
                 session_ok   += 1
             else:
-                raise ValueError("Silver load returned False")
-
+                raise ValueError("Silver load devolvió False")
         except Exception as exc:
             task.update({"status": "error", "error": str(exc),
                          "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")})
             session_err += 1
-            logger.error("[ERROR] %s failed: %s", fname, exc)
+            logger.error("[ERROR] %s: %s", fname, exc)
 
     _save_manifest(all_tasks)
-
-    logger.info("[DONE] transform_energy_prices — ok: %d | errors: %d | rows: %d",
+    logger.info("[DONE] transform_energy_prices — ok: %d | errores: %d | filas: %d",
                 session_ok, session_err, session_rows)
     return session_rows
 

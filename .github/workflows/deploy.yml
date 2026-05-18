@@ -1,46 +1,64 @@
-name: Deploy to Amazon ECR
+name: Deploy to Amazon ECR + ECS Task Definition
 
 on:
   push:
     branches:
-      - main  # Se ejecutará automáticamente cada vez que subas cambios a la rama main
+      - main
 
-# Permisos requeridos para autenticarse con AWS usando OIDC (sin contraseñas)
 permissions:
   id-token: write
   contents: read
 
 jobs:
   deploy:
-    name: Build and Push Image
+    name: Build, Push and Register
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout Code
-      uses: actions/checkout@v4
+      - name: Checkout Code
+        uses: actions/checkout@v4
 
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-    - name: Configure AWS Credentials
-      uses: aws-actions/configure-aws-credentials@v4
-      with:
-        role-to-assume: arn:aws:iam::610140802215:role/github-sunsaver-ecr-role
-        aws-region: eu-south-2
-        audience: sts.amazonaws.com
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::610140802215:role/github-sunsaver-ecr-role
+          aws-region: eu-south-2
+          audience: sts.amazonaws.com
 
-    - name: Log in to Amazon ECR
-      id: login-ecr
-      uses: aws-actions/amazon-ecr-login@v2
+      - name: Log in to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
 
-    - name: Build, Tag, and Push Image to Amazon ECR
-      env:
-        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-        ECR_REPOSITORY: sunsaver-etl
-        IMAGE_TAG: latest
-      run: |
-        # Compila la imagen Docker localmente en el servidor de GitHub
-        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
-        
-        # Sube la imagen directamente a tu ECR en la región de España
-        docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+      # Build + push con dos tags: SHA (historial) y latest (para Fargate)
+      - name: Build, Tag and Push image to ECR
+        id: build-image
+        env:
+          ECR_REGISTRY:   ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: sunsaver-etl
+          IMAGE_TAG:      ${{ github.sha }}
+        run: |
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker tag     $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
+                         $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          docker push    $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push    $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+      # Sustituye el campo "image" en task-definition.json con el SHA exacto
+      - name: Render new ECS task definition
+        id: render-task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name:  sunsaver-etl
+          image:           ${{ steps.build-image.outputs.image }}
+
+      # Registra la nueva revisión en ECS.
+      # EventBridge Scheduler apunta a la familia sin número → coge esta automáticamente.
+      - name: Register new ECS task definition revision
+        run: |
+          aws ecs register-task-definition \
+            --cli-input-json file://${{ steps.render-task-def.outputs.task-definition }}

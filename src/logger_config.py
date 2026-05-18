@@ -3,6 +3,9 @@ import sys
 from pathlib import Path
 from datetime import datetime
 import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 def setup_logging() -> logging.Logger:
@@ -27,7 +30,7 @@ def setup_logging() -> logging.Logger:
     ch.setLevel(logging.INFO)
     ch.setFormatter(fmt)
     logger.addHandler(ch)
-
+    
     # ── File handler solo en LOCAL_DEV ────────────────────────────────────────
     if os.getenv("LOCAL_DEV"):
         BASE_DIR = Path(__file__).resolve().parent.parent
@@ -38,5 +41,10 @@ def setup_logging() -> logging.Logger:
         fh.setLevel(logging.INFO)
         fh.setFormatter(fmt)
         logger.addHandler(fh)
+        
 
     return logger
+
+
+if __name__ == "__main__":
+    setup_logging()
