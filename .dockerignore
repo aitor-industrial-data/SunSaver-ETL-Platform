@@ -1,5 +1,38 @@
+# Datos locales (Bronze en disco)
+data/
+
+# Entornos virtuales
 venv/
-__pycache__/
-*.db
 .env
+
+# Logs
+logs/
+
+# Git
 .git/
+.gitignore
+
+# Docker
+dockerfile
+.dockerignore
+
+# IDEs
+.vscode/
+.idea/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Documentación
+docs/
+README.md
+
+# Airflow (si no lo usas en Fargate)
+airflow-docker/
+
+# Otros
+*.md
+*.txt
+!requirements.txt

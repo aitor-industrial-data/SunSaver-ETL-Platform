@@ -14,36 +14,73 @@ logger = setup_logging()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# MANIFEST HELPERS
+# ─────────────────────────────────────────────────────────────────────────────
+
+MANIFEST_KEY_S3    = f"bronze/manifests/_process_manifest_clients.json"
+MANIFEST_PATH_LOCAL = None   # se calcula en runtime
+
+
+def _load_manifest() -> list:
+    if os.getenv("LOCAL_DEV"):
+        bronze_dir    = config_paths.get_bronze_path()
+        manifest_path = os.path.join(bronze_dir, "_process_manifest_clients.json")
+        if not os.path.exists(manifest_path):
+            return []
+        with open(manifest_path, "r", encoding="utf-8") as fh:
+            return json.load(fh)
+    else:
+        try:
+            return config_paths.read_json_from_s3(MANIFEST_KEY_S3)
+        except Exception:
+            return []
+
+
+def _save_manifest(tasks: list) -> None:
+    if os.getenv("LOCAL_DEV"):
+        bronze_dir    = config_paths.get_bronze_path()
+        manifest_path = os.path.join(bronze_dir, "_process_manifest_clients.json")
+        with open(manifest_path, "w", encoding="utf-8") as fh:
+            json.dump(tasks, fh, indent=4, ensure_ascii=False)
+    else:
+        config_paths.write_json_to_s3(tasks, MANIFEST_KEY_S3)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # EXTRACT (Bronze → memory)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def extract_clients_from_json(file_path: str) -> pd.DataFrame:
-    """Reads a Bronze JSON file and returns a raw DataFrame with audit columns."""
+    """
+    Lee un fichero Bronze de clientes (desde S3 o disco local).
+    file_path es una clave S3 en AWS o una ruta local en LOCAL_DEV.
+    """
     try:
-        with open(file_path, "r", encoding="utf-8") as fh:
-            raw = json.load(fh)
+        if os.getenv("LOCAL_DEV"):
+            with open(file_path, "r", encoding="utf-8") as fh:
+                raw = json.load(fh)
+            source_name = os.path.basename(file_path)
+        else:
+            raw         = config_paths.read_json_from_s3(file_path)
+            source_name = file_path.split("/")[-1]
 
         df = pd.DataFrame(raw)
         df["_ingested_at_utc"] = datetime.now(timezone.utc)
-        df["_source_file"]     = os.path.basename(file_path)
+        df["_source_file"]     = source_name
 
-        logger.debug("[EXTRACT] %d raw row(s) loaded from %s", len(df), os.path.basename(file_path))
+        logger.debug("[EXTRACT] %d raw row(s) loaded from %s", len(df), source_name)
         return df
 
     except Exception as exc:
-        logger.error("[EXTRACT] Failed to read Bronze file %s: %s", os.path.basename(file_path), exc)
+        logger.error("[EXTRACT] Failed to read Bronze file %s: %s", file_path, exc)
         return pd.DataFrame()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# TRANSFORM (Bronze quality → Silver quality)
+# TRANSFORM
 # ─────────────────────────────────────────────────────────────────────────────
 
 def transform_clients_bronze_to_silver(df_raw: pd.DataFrame) -> pd.DataFrame:
-    """
-    Applies type coercion, business-rule validation, deduplication and null
-    imputation to promote client records from Bronze to Silver quality.
-    """
     if df_raw.empty:
         logger.warning("[TRANSFORM] Input DataFrame is empty — nothing to transform")
         return pd.DataFrame()
@@ -70,23 +107,21 @@ def transform_clients_bronze_to_silver(df_raw: pd.DataFrame) -> pd.DataFrame:
 
         df["_ingested_at_utc"] = pd.to_datetime(df["_ingested_at_utc"], errors="coerce")
 
-        # Drop records missing critical fields
         critical = ["client_id", "name", "latitude", "longitude", "pv_peak_power_kw", "_ingested_at_utc"]
         before   = len(df)
         df       = df.dropna(subset=critical)
         dropped  = before - len(df)
         if dropped:
-            logger.warning("[TRANSFORM] %d record(s) dropped — missing critical field(s): %s", dropped, critical)
+            logger.warning("[TRANSFORM] %d record(s) dropped — missing critical fields", dropped)
 
-        # ── Business rules ────────────────────────────────────────────────────
         df["latitude"]  = df["latitude"].round(6)
         df["longitude"] = df["longitude"].round(6)
         df["name"]      = df["name"].str.upper().str.strip()
 
         df = df[df["latitude"].between(-90, 90) & df["longitude"].between(-180, 180)]
-        df.loc[~df["angle"].between(0, 90),   "angle"]   = 30.0
-        df.loc[~df["aspect"].between(1, 360), "aspect"]  = 180.0
-        df.loc[~df["loss_pct"].between(0, 90),  "loss_pct"]  = 14.0
+        df.loc[~df["angle"].between(0, 90),       "angle"]       = 30.0
+        df.loc[~df["aspect"].between(1, 360),     "aspect"]      = 180.0
+        df.loc[~df["loss_pct"].between(0, 90),    "loss_pct"]    = 14.0
         df.loc[~df["soc_min_pct"].between(0, 90), "soc_min_pct"] = 20.0
         df.loc[df["efficiency"].notna() & ~df["efficiency"].between(0, 1), "efficiency"] = 0.15
 
@@ -94,12 +129,9 @@ def transform_clients_bronze_to_silver(df_raw: pd.DataFrame) -> pd.DataFrame:
         for col in ["panel_area_m2", "battery_capacity_kwh", "installation_cost_eur"]:
             df.loc[df[col] < 0, col] = 0
 
-        # ── Deduplication (keep most recent ingestion per client) ─────────────
         df = df.sort_values("_ingested_at_utc", ascending=False)
         df = df.drop_duplicates(subset=["client_id"], keep="first")
-        
 
-        # ── Null imputation ───────────────────────────────────────────────────
         df = df.fillna({
             "description":           "unknown",
             "nominal_load_kw":       df["pv_peak_power_kw"] * 1.3,
@@ -130,17 +162,11 @@ def transform_clients_bronze_to_silver(df_raw: pd.DataFrame) -> pd.DataFrame:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def load_clients_to_silver(df: pd.DataFrame, table_name: str = "clean_clients") -> bool:
-    """
-    Rebuilds the Silver client table from scratch and bulk-inserts the
-    validated DataFrame.  client_id is enforced as PRIMARY KEY.
-    """
-
     engine = get_engine()
     if engine is None:
         return False
-
     if df.empty:
-        logger.warning("[LOAD] DataFrame is empty — nothing written to '%s'", table_name)
+        logger.warning("[LOAD] DataFrame vacío — nada escrito en '%s'", table_name)
         return False
 
     logger.info("[LOAD] Writing %d record(s) to '%s'", len(df), table_name)
@@ -187,24 +213,11 @@ def load_clients_to_silver(df: pd.DataFrame, table_name: str = "clean_clients") 
 # ─────────────────────────────────────────────────────────────────────────────
 
 def transform_clients() -> int:
-    """
-    Module entry point: reads pending/error tasks from the Bronze manifest,
-    transforms each file and loads it to Silver, then persists updated task
-    statuses.  Returns the total number of rows committed to Silver.
-    """
     logger.info("[INIT] ── transform_clients starting ──────────────────────────")
 
-    bronze_dir    = config_paths.get_bronze_path()
-    manifest_path = os.path.join(bronze_dir, "_process_manifest_clients.json")
-
-    if not os.path.exists(manifest_path):
-        logger.info("[INIT] No manifest found at %s — nothing to process", manifest_path)
-        return 0
-
-    with open(manifest_path, "r", encoding="utf-8") as fh:
-        all_tasks = json.load(fh)
-
+    all_tasks  = _load_manifest()
     actionable = [t for t in all_tasks if t["status"] in ("pending", "error")]
+
     if not actionable:
         logger.info("[INIT] All manifest tasks already processed — nothing to do")
         return 0
@@ -217,7 +230,7 @@ def transform_clients() -> int:
 
     for task in actionable:
         path_file = task["path"]
-        fname     = os.path.basename(path_file)
+        fname     = path_file.split("/")[-1]
 
         logger.info("[EXTRACT] Processing Bronze file: %s", fname)
 
@@ -236,7 +249,6 @@ def transform_clients() -> int:
                 task.pop("error", None)
                 session_rows += rows
                 session_ok   += 1
-                logger.info("[LOAD] %s → %d row(s) committed to Silver", fname, rows)
             else:
                 raise ValueError("Silver load returned False")
 
@@ -249,11 +261,10 @@ def transform_clients() -> int:
             session_err += 1
             logger.error("[ERROR] %s failed: %s", fname, exc)
 
-    with open(manifest_path, "w", encoding="utf-8") as fh:
-        json.dump(all_tasks, fh, indent=4, ensure_ascii=False)
+    _save_manifest(all_tasks)
 
     logger.info(
-        "[DONE] transform_clients finished — tasks ok: %d | errors: %d | rows written: %d",
+        "[DONE] transform_clients — ok: %d | errors: %d | rows: %d",
         session_ok, session_err, session_rows,
     )
     return session_rows

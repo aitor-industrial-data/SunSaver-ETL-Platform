@@ -1,27 +1,20 @@
 import logging
+import sys
 from pathlib import Path
 from datetime import datetime
+import os
 
 
 def setup_logging() -> logging.Logger:
     """
-    Configures and returns the centralised SunSaver logger.
-
-    Output format  : TIMESTAMP | LEVEL    | MODULE  | MESSAGE
-    Destinations   : rotating daily file  +  stderr console
-    Logger name    : 'SunSaver'  (singleton — safe to call from multiple modules)
+    Configura logging para Fargate (stdout → CloudWatch) y local (archivo).
+    En AWS Fargate todo va a stdout para que CloudWatch lo capture.
     """
 
-    BASE_DIR = Path(__file__).resolve().parent.parent
-    log_dir  = BASE_DIR / "logs"
-    log_dir.mkdir(parents=True, exist_ok=True)
-
-    log_path = log_dir / f"sunsaver_{datetime.now().strftime('%Y-%m-%d')}.log"
-
     logger = logging.getLogger("SunSaver")
-    logger.setLevel(logging.DEBUG)          # Root level: DEBUG — handlers filter further
+    logger.setLevel(logging.DEBUG)
 
-    if logger.handlers:                     # Idempotent: skip if already configured
+    if logger.handlers:                     # Idempotente: no duplicar handlers
         return logger
 
     fmt = logging.Formatter(
@@ -29,17 +22,21 @@ def setup_logging() -> logging.Logger:
         datefmt = "%Y-%m-%d %H:%M:%S",
     )
 
-    # ── File handler (INFO+) ──────────────────────────────────────────────────
-    fh = logging.FileHandler(log_path, mode="a", encoding="utf-8")
-    fh.setLevel(logging.INFO)
-    fh.setFormatter(fmt)
-
-    # ── Console handler (INFO+) ───────────────────────────────────────────────
-    ch = logging.StreamHandler()
+    # ── Console handler (Fargate → CloudWatch Logs) ─────────────────────────
+    ch = logging.StreamHandler(sys.stdout)
     ch.setLevel(logging.INFO)
     ch.setFormatter(fmt)
-
-    logger.addHandler(fh)
     logger.addHandler(ch)
+
+    # ── File handler solo en LOCAL_DEV ────────────────────────────────────────
+    if os.getenv("LOCAL_DEV"):
+        BASE_DIR = Path(__file__).resolve().parent.parent
+        log_dir  = BASE_DIR / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_path = log_dir / f"sunsaver_{datetime.now().strftime('%Y-%m-%d')}.log"
+        fh = logging.FileHandler(log_path, mode="a", encoding="utf-8")
+        fh.setLevel(logging.INFO)
+        fh.setFormatter(fmt)
+        logger.addHandler(fh)
 
     return logger
