@@ -64,10 +64,10 @@ def transform_clients_bronze_to_silver(df_raw: pd.DataFrame) -> pd.DataFrame:
         ]
         text_cols = [
             "client_id", "name", "description", "panel_type",
-            "mounting", "timezone", "_ingested_at_utc",
+            "mounting", "timezone",
         ]
         for col in numeric_cols:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
+            df[col] = pd.to_numeric(df[col], errors="coerce").astype(float)
         for col in text_cols:
             df[col] = df[col].astype(str).replace(["None", "nan", "NaN", "null"], np.nan)
 
@@ -132,6 +132,9 @@ def load_clients_to_silver(df: pd.DataFrame, table_name: str = "clean_clients") 
 
     logger.info("[LOAD] Escribiendo %d registro(s) en '%s'", len(df), table_name)
     try:
+        # Serializar datetime a string para que to_sql no infiera tipos incorrectos
+        df["_ingested_at_utc"] = pd.to_datetime(df["_ingested_at_utc"]).dt.strftime("%Y-%m-%d %H:%M:%S")
+
         with engine.begin() as conn:
             conn.execute(text(f"DROP TABLE IF EXISTS {table_name}"))
             conn.execute(text(f"""
