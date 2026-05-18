@@ -50,6 +50,7 @@ ipython_config.py
 *.csv
 *.parquet
 *.json
+!task-definition.json
 *.avro
 *.xml
 # Evita subir carpetas de almacenamiento completas
