@@ -1,37 +1,41 @@
-import requests
-import stat
-import os
-from datetime import datetime, timedelta, timezone
-from dotenv import load_dotenv
 import json
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Union
+
+import requests
+from dotenv import load_dotenv
+import os
 
 import config_paths
 from logger_config import setup_logging
 
-
-logger = setup_logging()
 load_dotenv()
+logger = setup_logging()
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CONFIGURACIÓN
 # ─────────────────────────────────────────────────────────────────────────────
 
-API_KEY = os.getenv("ESIOS_API_KEY")
+API_KEY  = os.getenv("ESIOS_API_KEY")
 BASE_URL = "https://api.esios.ree.es/indicators"
 GEO_ID_PENINSULAR = 8741
 
-# Pedimos datos de AYER (D-1) para garantizar que todos están consolidados.
-# Lanzar junto con bronze_ingest_prices_d1.py a las 20:30 CET.
+# Pedimos D-1 para garantizar que todos los indicadores están consolidados.
+# Lanzar a las 20:30 CET junto con bronze_ingest_prices_d1.py.
+#
+# IDs verificados contra la API (19/05/2026):
+#   1293  — Demanda Real peninsular (MWh)              ✓ 24 valores
+#   1295  — Generación Fotovoltaica T.Real (MWh)       ✓ 24 valores
+#   10355 — CO2 Asociado Generación T.Real (tCO2/MWh)  ✓ 24 valores
+#   685   — Desvío a Subir (€/MWh)                     ✓ 24 valores
+#
+
 INDICATORS = {
-    "upward_imb":   685,    # Desvío a Subir (€/MWh)
-    "downward_imb": 686,    # Desvío a Bajar (€/MWh)
-    "imb_price":    687,    # Precio Medio de los Desvíos (€/MWh)
-    "demand_real":  1293,    # Demanda Real de Energía (MWh)
-    "pv_gen":       1295,  # Generación Fotovoltaica Nacional (MWh)
-    "wind_gen":     10034,  # Generación Eólica Total (MWh)
-    "co2":          10299,  # CO2 Asociado a la Generación (tCO2eq/MWh)
-    "exchanges":    10211,  # Intercambios Internacionales Netos (MWh)
+    "demand_real": 1293,
+    "pv_gen":      1295,
+    "co2":         10355,
+    "upward_imb":  685,
 }
 
 
@@ -49,7 +53,13 @@ def _build_headers() -> dict:
     }
 
 
-def _fetch_indicator(indicator_id: int, name: str, target_date: datetime, headers: dict) -> Optional[dict]:
+def _fetch_indicator(
+    indicator_id: int,
+    name: str,
+    target_date: datetime,
+    headers: dict,
+) -> Optional[dict]:
+    """Solicita un indicador horario para target_date en UTC."""
     start = target_date.strftime("%Y-%m-%dT00:00")
     end   = target_date.strftime("%Y-%m-%dT23:59")
     url   = (
@@ -88,7 +98,7 @@ def extract_yesterday_context() -> Optional[dict]:
         logger.error("[EXTRACT] %s", exc)
         return None
 
-    yesterday = datetime.now() - timedelta(days=1)
+    yesterday = datetime.now(timezone.utc) - timedelta(days=1)
     logger.info("[EXTRACT] ── D-1 context extraction  target=%s ──", yesterday.date())
 
     results: dict[str, Optional[dict]] = {}
@@ -114,57 +124,49 @@ def extract_yesterday_context() -> Optional[dict]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# INGEST → BRONZE
+# INGEST → BRONZE (S3)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def ingest_to_bronze(payload: dict) -> Optional[str]:
-    bronze_dir = config_paths.get_bronze_path()
-    os.makedirs(bronze_dir, exist_ok=True)
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    s3_key    = f"{config_paths.get_bronze_prefix()}context/context_d1_{timestamp}.json"
 
-    ts        = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    filename  = f"context_d1_{ts}.json"
-    full_path = os.path.join(bronze_dir, filename)
+    logger.info("[BRONZE] Escribiendo payload → s3://%s/%s",
+                config_paths.S3_BUCKET, s3_key)
+    ok = config_paths.write_json_to_s3(payload, s3_key)
+    if ok:
+        logger.info("[BRONZE] Objeto S3 creado: %s", s3_key)
+        return s3_key
 
-    try:
-        with open(full_path, "w", encoding="utf-8") as fh:
-            json.dump(payload, fh, ensure_ascii=False, indent=4)
-        os.chmod(full_path, stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
-        logger.info("[BRONZE] Sealed (chmod 444): %s", filename)
-        return full_path
-    except Exception as exc:
-        logger.error("[BRONZE] Persistence failed: %s", exc)
-        return None
+    logger.error("[BRONZE] Error escribiendo en S3: %s", s3_key)
+    return None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # MANIFEST
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _update_manifest(bronze_dir: str, path_file: str) -> None:
-    manifest_path = os.path.join(bronze_dir, "_process_manifest_esios_d1_context.json")
+def _update_manifest(path_file: str) -> None:
+    manifest_key = f"{config_paths.get_bronze_prefix()}manifests/_process_manifest_esios_context_d1.json"
 
     new_task = {
-        "source":     "ESIOS_D1_CONTEXT",
+        "source":     "ESIOS_CONTEXT_D1",
         "path":       path_file,
         "status":     "pending",
         "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
         "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
     }
 
-    all_tasks: list = []
-    if os.path.exists(manifest_path):
-        try:
-            with open(manifest_path, "r", encoding="utf-8") as fh:
-                all_tasks = json.load(fh)
-        except Exception:
-            logger.warning("[MANIFEST] No se pudo leer — empezando de cero")
+    try:
+        all_tasks = config_paths.read_json_from_s3(manifest_key)
+    except Exception:
+        all_tasks = []
 
     all_tasks.append(new_task)
-    with open(manifest_path, "w", encoding="utf-8") as fh:
-        json.dump(all_tasks, fh, indent=4, ensure_ascii=False)
+    config_paths.write_json_to_s3(all_tasks, manifest_key)
 
     pending = sum(1 for t in all_tasks if t["status"] == "pending")
-    logger.info("[MANIFEST] esios_d1_context updated — pending: %d", pending)
+    logger.info("[MANIFEST] esios_context_d1 actualizado — pendientes: %d", pending)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -173,15 +175,17 @@ def _update_manifest(bronze_dir: str, path_file: str) -> None:
 
 def extract_system_context() -> Union[int, bool]:
     """
-    Extrae contexto del sistema de AYER (D-1) → Bronze → manifest.
+    Extrae contexto del sistema eléctrico de AYER (D-1) → S3 Bronze → manifest.
     Lanzar a las 20:30 CET junto con bronze_ingest_prices_d1.py.
-    Al pedir D-1 todos los indicadores están siempre consolidados, incluido pv_gen.
+
+    Indicadores: demanda real, fotovoltaica, eólica, CO2, desvío a subir.
+    Todos consolidados en D-1 — no hay riesgo de valores parciales.
 
     Returns:
-        int   — número de indicadores ingestados.
+        int   — número de indicadores ingestados con éxito.
         False — ningún indicador disponible (→ PARTIAL SUCCESS).
     """
-    logger.info("[INIT] ── extract_system_context D-1 starting ──")
+    logger.info("[INIT] ── extract_system_context D-1 starting ──────────────")
 
     payload = extract_yesterday_context()
     if payload is None:
@@ -190,13 +194,16 @@ def extract_system_context() -> Union[int, bool]:
 
     path_file = ingest_to_bronze(payload)
     if not path_file:
-        logger.error("[BRONZE] Ingestion failed — aborting")
+        logger.error("[BRONZE] Ingesta fallida — abortando")
         return False
 
-    _update_manifest(str(config_paths.get_bronze_path()), path_file)
+    _update_manifest(path_file)
 
     n_ok = sum(1 for v in payload["indicators"].values() if v is not None)
-    logger.info("[DONE] D-1 context indicators ingested: %d/%d", n_ok, len(payload["indicators"]))
+    logger.info(
+        "[DONE] D-1 context indicators ingested: %d/%d",
+        n_ok, len(payload["indicators"]),
+    )
     return n_ok
 
 
