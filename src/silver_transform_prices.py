@@ -36,7 +36,7 @@ def extract_raw_ree_from_json(file_path: str) -> pd.DataFrame:
         raw         = config_paths.read_json_from_s3(file_path)
         source_name = file_path.split("/")[-1]
         return pd.DataFrame([{
-            "_ingested_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+            "_ingested_at_utc": datetime.now(timezone.utc),
             "_source_file":     source_name,
             "raw_data":         json.dumps(raw),
         }])
@@ -79,18 +79,19 @@ def transform_prices_bronze_to_silver(df_raw: pd.DataFrame) -> pd.DataFrame:
             logger.warning("[TRANSFORM] %d outlier(s) filtrados", outlier_mask.sum())
             df = df[~outlier_mask]
 
-        df = (df.sort_values("_ingested_at_utc", ascending=False)
-                .drop_duplicates(subset=["price_type", "datetime_utc"], keep="first")
-                .sort_values(["price_type", "datetime_utc"])
-                .reset_index(drop=True))
+        df = (
+            df.sort_values("_ingested_at_utc", ascending=False)
+              .drop_duplicates(subset=["price_type", "datetime_utc"], keep="first")
+              .sort_values(["price_type", "datetime_utc"])
+              .reset_index(drop=True)
+        )
 
         df["price_euro_mwh"] = df.groupby("price_type")["price_euro_mwh"].transform(
             lambda x: x.interpolate(method="linear").ffill().bfill().round(4)
         )
-        df["unix_time"] = (
-            df["datetime_utc"].dt.tz_localize(None)
-            .astype("datetime64[s]").astype("int64")
-        )
+
+        # unix_time calculado directamente desde datetime_utc tz-aware, sin quitar timezone
+        df["unix_time"] = df["datetime_utc"].astype("int64") // 10**9
 
         logger.info("[TRANSFORM] %d registros Silver de precios producidos", len(df))
         return df
@@ -112,23 +113,27 @@ def load_ree_to_silver(df: pd.DataFrame, table_name: str = "clean_prices") -> bo
     logger.info("[LOAD] Upsertando %d registro(s) en '%s'", len(df), table_name)
     try:
         df_sql = df.copy()
-        df_sql["datetime_utc"]     = pd.to_datetime(df_sql["datetime_utc"]).dt.strftime("%Y-%m-%d %H:%M:%S")
-        df_sql["_ingested_at_utc"] = pd.to_datetime(df_sql["_ingested_at_utc"]).dt.strftime("%Y-%m-%d %H:%M:%S")
+        df_sql["datetime_utc"]     = pd.to_datetime(df_sql["datetime_utc"], utc=True)
+        df_sql["_ingested_at_utc"] = pd.to_datetime(df_sql["_ingested_at_utc"], utc=True)
 
         with engine.begin() as conn:
             conn.execute(text(f"""
                 CREATE TABLE IF NOT EXISTS {table_name} (
-                    unix_time           INTEGER NOT NULL,
-                    datetime_utc        TEXT    NOT NULL,
+                    unix_time           BIGINT NOT NULL,
+                    datetime_utc        TIMESTAMP WITH TIME ZONE NOT NULL,
                     price_type          TEXT    NOT NULL,
-                    price_euro_mwh      REAL,
+                    price_euro_mwh      DOUBLE PRECISION,
                     _source_file        TEXT,
-                    _ingested_at_utc    TEXT NOT NULL,
+                    _ingested_at_utc    TIMESTAMP WITH TIME ZONE NOT NULL,
                     PRIMARY KEY (datetime_utc, price_type)
                 )
             """))
+
             cols        = df_sql.columns.tolist()
-            update_stmt = ", ".join([f"{c} = EXCLUDED.{c}" for c in cols])
+            pk_cols     = ["datetime_utc", "price_type"]
+            update_cols = [c for c in cols if c not in pk_cols]
+            update_stmt = ", ".join([f"{c} = EXCLUDED.{c}" for c in update_cols])
+
             conn.execute(text(f"""
                 INSERT INTO {table_name} ({', '.join(cols)})
                 VALUES ({', '.join(':' + c for c in cols)})
@@ -168,15 +173,21 @@ def transform_energy_prices() -> int:
                 raise ValueError("Transformación produjo DataFrame vacío")
             rows = len(df_silver)
             if load_ree_to_silver(df_silver):
-                task.update({"status": "success", "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")})
+                task.update({
+                    "status":     "success",
+                    "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+                })
                 task.pop("error", None)
                 session_rows += rows
                 session_ok   += 1
             else:
                 raise ValueError("Silver load devolvió False")
         except Exception as exc:
-            task.update({"status": "error", "error": str(exc),
-                         "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")})
+            task.update({
+                "status":     "error",
+                "error":      str(exc),
+                "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+            })
             session_err += 1
             logger.error("[ERROR] %s: %s", fname, exc)
 

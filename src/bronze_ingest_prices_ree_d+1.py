@@ -16,10 +16,11 @@ logger = setup_logging()
 # ── EXTRACT ───────────────────────────────────────────────────────────────────
 
 def extract_raw_json_from_ree() -> Union[dict, bool]:
+    today= datetime.now().strftime("%Y-%m-%d")
     tomorrow = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
     url = (
         "https://apidatos.ree.es/es/datos/mercados/precios-mercados-tiempo-real"
-        f"?start_date={tomorrow}T00:00&end_date={tomorrow}T23:59"
+        f"?start_date={today}T00:00&end_date={today}T23:59"
         "&time_trunc=hour&geo_trunc=electric_system"
         "&geo_limit=peninsular&geo_ids=8741"
     )
