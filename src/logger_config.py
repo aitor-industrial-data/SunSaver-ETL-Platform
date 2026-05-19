@@ -35,7 +35,6 @@ def setup_logging() -> logging.Logger:
     if os.getenv("LOCAL_DEV"):
         BASE_DIR = Path(__file__).resolve().parent.parent
         log_dir  = BASE_DIR / "logs"
-        print(log_dir)
         log_dir.mkdir(parents=True, exist_ok=True)
         log_path = log_dir / f"sunsaver_{datetime.now().strftime('%Y-%m-%d')}.log"
         fh = logging.FileHandler(log_path, mode="a", encoding="utf-8")
