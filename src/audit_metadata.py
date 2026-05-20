@@ -7,12 +7,12 @@ from dotenv import load_dotenv
 from database_utils import get_engine
 from logger_config import setup_logging
 
-
 logger = setup_logging()
 
+# Carga las variables del archivo .env si estás en local
 load_dotenv()
 
-metadata      = MetaData()
+metadata = MetaData()
 metadata_table = Table(
     "etl_metadata", metadata,
     Column("id",                         Integer,  primary_key=True),
@@ -23,7 +23,7 @@ metadata_table = Table(
     Column("error_message",              String),
     Column("env",                        String),
     Column("_executed_by",               String),
-    Column("_executed_at",               DateTime, default=datetime.now(timezone.utc)),
+    Column("_executed_at",               DateTime, default=lambda: datetime.now(timezone.utc)), # Corregido a lambda
     schema="etl",
 )
 
@@ -38,20 +38,21 @@ def save_etl_metadata(status: str, duration: float, rows: int = 0, error: str = 
         rows     : Total rows processed across all pipeline steps.
         error    : Human-readable error summary, or None on clean runs.
     """
+    # 1. Detectamos el entorno de forma dinámica (Por defecto 'DEV' si no existe la variable)
+    current_env = os.getenv("ENVIRONMENT", "DEV").upper()
+
     logger.info(
-        "[METADATA] Saving audit record — status: %s | duration: %.2fs | rows: %d",
-        status, duration, rows,
+        "[METADATA] Saving audit record [%s] — status: %s | duration: %.2fs | rows: %d",
+        current_env, status, duration, rows,
     )
 
-    
-
     try:
+        # 2. Detectamos quién ejecuta: Nombre del Host local o el de la tarea de AWS
         host_name = socket.gethostname()
         engine = get_engine()
 
-
         with engine.connect() as conn:
-            conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS etl"))
+            conn.execute(text("CREATE SCHEMA IF NOT EXISTS etl"))
             conn.commit()
 
         metadata.create_all(engine)
@@ -63,7 +64,7 @@ def save_etl_metadata(status: str, duration: float, rows: int = 0, error: str = 
                 duration_seconds= round(duration, 2),
                 rows_affected   = rows,
                 error_message   = error,
-                env             = "DEV",
+                env             = current_env,  # <-- Inyectamos la variable dinámica
                 _executed_by    = host_name
             ))
             conn.commit()
