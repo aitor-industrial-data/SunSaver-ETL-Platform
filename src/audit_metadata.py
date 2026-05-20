@@ -38,7 +38,8 @@ def save_etl_metadata(status: str, duration: float, rows: int = 0, error: str = 
         rows     : Total rows processed across all pipeline steps.
         error    : Human-readable error summary, or None on clean runs.
     """
-    # 1. Detectamos el entorno de forma dinámica (Por defecto 'DEV' si no existe la variable)
+    
+    
     current_env = os.getenv("ENVIRONMENT", "DEV").upper()
 
     logger.info(

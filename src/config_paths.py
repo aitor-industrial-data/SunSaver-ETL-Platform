@@ -5,7 +5,6 @@ Rutas y helpers S3.
 
   - Local  : S3_BUCKET y BRONZE_PREFIX vienen del .env.
   - Fargate: ECS inyecta esas mismas variables desde la task definition.
-  Sin ningún if LOCAL_DEV.
 """
 
 import json
