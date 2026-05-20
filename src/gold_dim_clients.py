@@ -1,5 +1,5 @@
 import sqlalchemy
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
 from database_utils import get_engine
@@ -7,7 +7,6 @@ from logger_config import setup_logging
 
 
 logger = setup_logging()
-
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -20,7 +19,7 @@ def build_dim_client(engine: sqlalchemy.engine.Engine) -> int:
     has_battery boolean flags.  Returns the number of rows inserted.
     """
     logger.info("[INIT] ── build_dim_client starting ────────────────────────")
-
+    
     try:
         with engine.begin() as conn:
             rows = conn.execute(text("""
@@ -29,7 +28,7 @@ def build_dim_client(engine: sqlalchemy.engine.Engine) -> int:
                     nominal_load_kw, pv_peak_power_kw, panel_area_m2,
                     efficiency, panel_type, loss_pct, angle, aspect, mounting,
                     battery_capacity_kwh, soc_min_pct, installation_cost_eur
-                FROM clean_clients
+                FROM silver.clean_clients
                 ORDER BY client_id
             """)).fetchall()
 
@@ -67,34 +66,39 @@ def build_dim_client(engine: sqlalchemy.engine.Engine) -> int:
 
         logger.info("[TRANSFORM] Derived flags computed for %d client(s)", len(registros))
 
+        schema      = "gold"
+        full_table  = f"{schema}.dim_client"
+
         with engine.begin() as conn:
-            conn.execute(text("DROP TABLE IF EXISTS gold_dim_client"))
-            conn.execute(text("""
-                CREATE TABLE gold_dim_client (
+            conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {schema}"))
+            conn.execute(text(f"DROP TABLE IF EXISTS {full_table}"))
+            conn.execute(text(f"""
+                CREATE TABLE {full_table} (
                     client_id               TEXT    PRIMARY KEY,
                     name                    TEXT    NOT NULL,
                     description             TEXT,
-                    latitude                REAL    NOT NULL,
-                    longitude               REAL    NOT NULL,
+                    latitude                DOUBLE PRECISION NOT NULL,
+                    longitude               DOUBLE PRECISION NOT NULL,
                     timezone                TEXT    NOT NULL,
-                    nominal_load_kw         REAL    NOT NULL,
-                    pv_peak_power_kw        REAL    NOT NULL,
-                    panel_area_m2           REAL    NOT NULL,
-                    efficiency              REAL    NOT NULL,
+                    nominal_load_kw         DOUBLE PRECISION NOT NULL,
+                    pv_peak_power_kw        DOUBLE PRECISION NOT NULL,
+                    panel_area_m2           DOUBLE PRECISION NOT NULL,
+                    efficiency              DOUBLE PRECISION NOT NULL,
                     panel_type              TEXT    NOT NULL,
-                    loss_pct                REAL    NOT NULL,
-                    angle                   REAL    NOT NULL,
-                    aspect                  REAL    NOT NULL,
+                    loss_pct                DOUBLE PRECISION NOT NULL,
+                    angle                   DOUBLE PRECISION NOT NULL,
+                    aspect                  DOUBLE PRECISION NOT NULL,
                     mounting                TEXT    NOT NULL,
-                    battery_capacity_kwh    REAL    NOT NULL,
-                    soc_min_pct             REAL    NOT NULL,
-                    installation_cost_eur   REAL    NOT NULL,
+                    battery_capacity_kwh    DOUBLE PRECISION NOT NULL,
+                    soc_min_pct             DOUBLE PRECISION NOT NULL,
+                    installation_cost_eur   DOUBLE PRECISION NOT NULL,
                     has_solar               INTEGER NOT NULL,
-                    has_battery             INTEGER NOT NULL
+                    has_battery             INTEGER NOT NULL,
+                    _loaded_at_utc          TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
                 )
             """))
-            conn.execute(text("""
-                INSERT INTO gold_dim_client (
+            conn.execute(text(f"""
+                INSERT INTO {full_table} (
                     client_id, name, description, latitude, longitude, timezone,
                     nominal_load_kw, pv_peak_power_kw, panel_area_m2,
                     efficiency, panel_type, loss_pct, angle, aspect, mounting,
@@ -110,7 +114,7 @@ def build_dim_client(engine: sqlalchemy.engine.Engine) -> int:
             """), registros)
 
         total = len(registros)
-        logger.info("[DONE] gold_dim_client rebuilt — rows inserted: %d", total)
+        logger.info(f"[DONE] {full_table} rebuilt — rows inserted: %d", total)
         return total
 
     except SQLAlchemyError as exc:

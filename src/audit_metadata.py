@@ -1,6 +1,6 @@
 import os
 import socket
-from sqlalchemy import create_engine, Table, Column, Integer, String, DateTime, Float, MetaData
+from sqlalchemy import create_engine, text, Table, Column, Integer, String, DateTime, Float, MetaData
 from datetime import datetime, timezone
 from dotenv import load_dotenv
 
@@ -22,8 +22,9 @@ metadata_table = Table(
     Column("rows_affected",              Integer),
     Column("error_message",              String),
     Column("env",                        String),
-    Column("_executed_by",             String),
+    Column("_executed_by",               String),
     Column("_executed_at",               DateTime, default=datetime.now(timezone.utc)),
+    schema="etl",
 )
 
 
@@ -43,11 +44,15 @@ def save_etl_metadata(status: str, duration: float, rows: int = 0, error: str = 
     )
 
     
-    
 
     try:
         host_name = socket.gethostname()
         engine = get_engine()
+
+
+        with engine.connect() as conn:
+            conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS etl"))
+            conn.commit()
 
         metadata.create_all(engine)
 

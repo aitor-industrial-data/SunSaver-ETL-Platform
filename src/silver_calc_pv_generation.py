@@ -24,9 +24,12 @@ def get_merged_silver_data(table_name_1: str = "clean_clients", table_name_2: st
     engine = get_engine()
     now_unix = int(datetime.now(timezone.utc).timestamp())
 
+    schema      = "silver"
+    full_table_1 = f"{schema}.{table_name_1}"
+    full_table_2 = f"{schema}.{table_name_2}"
     logger.info(
         "[EXTRACT] Querying active window from '%s' ⨝ '%s' (unix_time >= %d)",
-        table_name_1, table_name_2, now_unix,
+        full_table_1, full_table_2, now_unix,
     )
 
     try:
@@ -44,8 +47,8 @@ def get_merged_silver_data(table_name_1: str = "clean_clients", table_name_2: st
                    w.weather_main,
                    w.weather_description,
                    w.is_daylight
-            FROM {table_name_1} AS c
-            INNER JOIN {table_name_2} AS w ON c.client_id = w.client_id
+            FROM {full_table_1} AS c
+            INNER JOIN {full_table_2} AS w ON c.client_id = w.client_id
             WHERE w.unix_time >= :now_unix
         """)
         
@@ -137,28 +140,28 @@ def load_generation_to_silver(df: pd.DataFrame, table_name: str = "clean_calcula
         logger.warning("[LOAD] DataFrame is empty — nothing written to '%s'", table_name)
         return False
 
-    logger.info("[LOAD] Upserting %d record(s) into '%s'", len(df), table_name)
+    schema      = "silver"
+    full_table  = f"{schema}.{table_name}"
+    logger.info("[LOAD] Upserting %d record(s) into '%s'", len(df), full_table)
 
     try:
-        df_sql = df.copy()
         with engine.begin() as connection:
-            # 1. Aseguramos la tabla con la PK explícita para que el ON CONFLICT funcione
             connection.execute(text(f"""
-                CREATE TABLE IF NOT EXISTS {table_name} (
+                CREATE TABLE IF NOT EXISTS {full_table} (
                     client_id               TEXT NOT NULL,
                     unix_time               BIGINT NOT NULL,
-                    forecast_time_utc       TEXT,
+                    forecast_time_utc       TIMESTAMP WITH TIME ZONE,
                     pv_power_gen_kw         DOUBLE PRECISION,
                     pv_performance_ratio    DOUBLE PRECISION,
                     poa_wm2                 DOUBLE PRECISION,
                     t_cell_celsius          DOUBLE PRECISION,
                     power_con_kw            DOUBLE PRECISION,
-                    calculated_at_utc       TEXT,
+                    calculated_at_utc       TIMESTAMP WITH TIME ZONE,
                     PRIMARY KEY (client_id, unix_time)
                 );
             """))
 
-            columns = list(df_sql.columns)
+            columns = list(df.columns)
             placeholders = [f":{col}" for col in columns]
             
             # 2. Generamos el SET dinámico excluyendo las llaves primarias
@@ -166,19 +169,18 @@ def load_generation_to_silver(df: pd.DataFrame, table_name: str = "clean_calcula
             update_stmt = ", ".join([f"{col} = EXCLUDED.{col}" for col in update_cols])
 
             upsert_query = text(f"""
-                INSERT INTO {table_name} ({', '.join(columns)})
+                INSERT INTO {full_table} ({', '.join(columns)})
                 VALUES ({', '.join(placeholders)})
                 ON CONFLICT (client_id, unix_time) 
                 DO UPDATE SET {update_stmt}
             """)
 
-            connection.execute(upsert_query, df_sql.to_dict(orient="records"))
-
-        logger.info("[LOAD] %d record(s) written to '%s' (Postgres)", len(df), table_name)
+            connection.execute(upsert_query, df.to_dict(orient="records"))
+        logger.info("[LOAD] %d record(s) written to '%s' (Postgres)", len(df), full_table)
         return True
 
     except Exception as exc:
-        logger.error("[LOAD] Failed to write to '%s': %s", table_name, exc)
+        logger.error("[LOAD] Failed to write to '%s': %s", full_table, exc)
         return False
 
 

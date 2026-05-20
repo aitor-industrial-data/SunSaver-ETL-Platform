@@ -2,13 +2,11 @@ import sqlalchemy
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
-
 from database_utils import get_engine
 from logger_config import setup_logging
 
 
 logger  = setup_logging()
-
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -24,25 +22,28 @@ def build_dim_weather(engine: sqlalchemy.engine.Engine) -> int:
     """
     logger.info("[INIT] ── build_dim_weather starting ───────────────────────")
 
+    schema      = "gold"
+    full_table  = f"{schema}.dim_weather"
+    
     try:
         with engine.begin() as conn:
-            conn.execute(text("DROP TABLE IF EXISTS gold_dim_weather"))
-            conn.execute(text("""
-                CREATE TABLE gold_dim_weather (
-                    weather_id          INTEGER NOT NULL PRIMARY KEY,
-                    weather_main        TEXT    NOT NULL,
-                    weather_description TEXT    NOT NULL,
-                    _loaded_at_utc      TEXT    NOT NULL
+            conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {schema}"))
+            conn.execute(text(f"DROP TABLE IF EXISTS {full_table}"))
+            conn.execute(text(f"""
+                CREATE TABLE {full_table} (
+                    weather_id          INTEGER                  NOT NULL PRIMARY KEY,
+                    weather_main        TEXT                     NOT NULL,
+                    weather_description TEXT                     NOT NULL,
+                    _loaded_at_utc      TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
                 )
             """))
 
-            conn.execute(text("""
-                INSERT INTO gold_dim_weather
+            conn.execute(text(f"""
+                INSERT INTO {full_table} (weather_id, weather_main, weather_description)
                 SELECT
                     weather_id,
                     weather_main,
-                    weather_description,
-                    TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS') AS _loaded_at_utc
+                    weather_description
                 FROM (
                     SELECT
                         weather_id,
@@ -53,16 +54,16 @@ def build_dim_weather(engine: sqlalchemy.engine.Engine) -> int:
                             PARTITION BY weather_id
                             ORDER BY COUNT(*) DESC
                         ) AS rn
-                    FROM clean_weather
+                    FROM silver.clean_weather
                     WHERE weather_id IS NOT NULL
                     GROUP BY weather_id, weather_main, weather_description
                 ) subquery
                 WHERE rn = 1
             """))
 
-            total = conn.execute(text("SELECT COUNT(*) FROM gold_dim_weather")).scalar()
+            total = conn.execute(text(f"SELECT COUNT(*) FROM {full_table}")).scalar()
 
-        logger.info("[DONE] gold_dim_weather rebuilt — rows inserted: %d", total)
+        logger.info(f"[DONE] {full_table} rebuilt — rows inserted: %d", total)
         return total
 
     except SQLAlchemyError as exc:

@@ -129,7 +129,7 @@ def extract_yesterday_context() -> Optional[dict]:
 
 def ingest_to_bronze(payload: dict) -> Optional[str]:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    s3_key    = f"{config_paths.get_bronze_prefix()}context/context_d1_{timestamp}.json"
+    s3_key    = f"{config_paths.get_bronze_prefix()}context/context_{timestamp}.json"
 
     logger.info("[BRONZE] Escribiendo payload → s3://%s/%s",
                 config_paths.S3_BUCKET, s3_key)
@@ -147,10 +147,10 @@ def ingest_to_bronze(payload: dict) -> Optional[str]:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _update_manifest(path_file: str) -> None:
-    manifest_key = f"{config_paths.get_bronze_prefix()}manifests/_process_manifest_esios_context_d1.json"
+    manifest_key = f"{config_paths.get_bronze_prefix()}manifests/_process_manifest_esios_context.json"
 
     new_task = {
-        "source":     "ESIOS_CONTEXT_D1",
+        "source":     "ESIOS_CONTEXT",
         "path":       path_file,
         "status":     "pending",
         "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
@@ -166,7 +166,7 @@ def _update_manifest(path_file: str) -> None:
     config_paths.write_json_to_s3(all_tasks, manifest_key)
 
     pending = sum(1 for t in all_tasks if t["status"] == "pending")
-    logger.info("[MANIFEST] esios_context_d1 actualizado — pendientes: %d", pending)
+    logger.info("[MANIFEST] esios_context actualizado — pendientes: %d", pending)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

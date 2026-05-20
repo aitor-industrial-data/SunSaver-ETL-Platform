@@ -17,10 +17,11 @@ logger = setup_logging()
 
 def extract_raw_json_from_ree() -> Union[dict, bool]:
     today= datetime.now().strftime("%Y-%m-%d")
+    yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
     tomorrow = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
     url = (
         "https://apidatos.ree.es/es/datos/mercados/precios-mercados-tiempo-real"
-        f"?start_date={today}T00:00&end_date={today}T23:59"
+        f"?start_date={yesterday}T00:00&end_date={tomorrow}T23:59"
         "&time_trunc=hour&geo_trunc=electric_system"
         "&geo_limit=peninsular&geo_ids=8741"
     )
@@ -38,9 +39,17 @@ def extract_raw_json_from_ree() -> Union[dict, bool]:
         pvpc_item = next(
             (i for i in all_data.get("included", []) if i.get("id") == "1001"), None
         )
+        
         if pvpc_item and pvpc_item["attributes"].get("values"):
-            n = len(pvpc_item["attributes"]["values"])
-            logger.info("[EXTRACT] PVPC data retrieved — %d hourly values for %s", n, tomorrow)
+            hours_retrieved = len(pvpc_item["attributes"]["values"])
+        
+            if hours_retrieved == 72:
+                logger.info("[EXTRACT] Full 3-day dataset secured (including tomorrow).")
+            elif hours_retrieved == 48:
+                logger.warning("[EXTRACT] Only yesterday and today retrieved. Tomorrow is not available yet.")
+            else:
+                logger.info("[EXTRACT] Retrieved %d hourly points.", hours_retrieved)
+                
             all_data["included"] = [pvpc_item]
             return all_data
 

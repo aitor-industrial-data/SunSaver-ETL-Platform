@@ -15,14 +15,17 @@ from logger_config import setup_logging
 from audit_metadata import save_etl_metadata
 import bronze_ingest_clients
 import bronze_ingest_prices_ree
+import bronze_ingest_context
 import silver_transform_clients
 import silver_transform_prices
+import silver_transform_context
 import bronze_ingest_weather_owm
 import silver_transform_weather
 import silver_calc_pv_generation
 import gold_dim_clients
 import gold_dim_datetime
 import gold_dim_weather
+import gold_fact_energy_historical
 import gold_fact_energy_forecast
 
 # ── Logging ───────────────────────────────────────────────────────────────────
@@ -33,17 +36,20 @@ logger = setup_logging()
 # Definición del pipeline
 # ─────────────────────────────────────────────────────────────────────────────
 PIPELINE: list[tuple[int, str, Callable]] = [
-    (1, "extract_clients",           bronze_ingest_clients.extract_clients),
-    (1, "extract_energy_prices",     bronze_ingest_prices_ree.extract_energy_prices),
-    (2, "transform_clients",         silver_transform_clients.transform_clients),
-    (2, "transform_energy_prices",   silver_transform_prices.transform_energy_prices),
-    (3, "extract_openweather",       bronze_ingest_weather_owm.extract_openweather),
-    (4, "transform_openweather",     silver_transform_weather.transform_openweather),
-    (5, "extract_generation_data",   silver_calc_pv_generation.extract_generation_data),
-    (6, "gold_dim_clients",          gold_dim_clients.load_dim_client),
-    (6, "gold_dim_datetime",         gold_dim_datetime.load_dim_datetime),
-    (6, "gold_dim_weather",          gold_dim_weather.load_dim_weather),
-    (6, "gold_fact_energy",          gold_fact_energy_forecast.load_fact_energy_forecast),
+    (1, "extract_clients",             bronze_ingest_clients.extract_clients),
+    (1, "extract_energy_prices",       bronze_ingest_prices_ree.extract_energy_prices),
+    (1, "extract_system_context",      bronze_ingest_context.extract_system_context),
+    (2, "transform_clients",           silver_transform_clients.transform_clients),
+    (2, "transform_energy_prices",     silver_transform_prices.transform_energy_prices),
+    (2, "transform_context",           silver_transform_context.transform_energy_context),
+    (3, "extract_openweather",         bronze_ingest_weather_owm.extract_openweather),
+    (4, "transform_openweather",       silver_transform_weather.transform_openweather),
+    (5, "extract_generation_data",     silver_calc_pv_generation.extract_generation_data),
+    (6, "gold_dim_clients",            gold_dim_clients.load_dim_client),
+    (6, "gold_dim_datetime",           gold_dim_datetime.load_dim_datetime),
+    (6, "gold_dim_weather",            gold_dim_weather.load_dim_weather),
+    (6, "gold_fact_energy_historical", gold_fact_energy_historical.load_fact_energy_historical),
+    (7, "gold_fact_energy_forecast",   gold_fact_energy_forecast.load_fact_energy_forecast),
 ]
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -147,10 +153,8 @@ def run_pipeline(from_stage: int = 1, dry_run: bool = False) -> bool:
         if steps_ko > 0 and "FAILED" not in pipeline_status:
             pipeline_status = "PARTIAL SUCCESS"
 
-
         if not dry_run:
             try:
-                
                 save_etl_metadata(
                     status=pipeline_status, 
                     duration=round(elapsed_total, 2),
@@ -176,7 +180,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--stage", type=int, default=1, metavar="N",
-        help="Stage desde el que arrancar (1-6)."
+        help="Stage desde el que arrancar (1-7)."
     )
     parser.add_argument(
         "--dry-run", action="store_true",

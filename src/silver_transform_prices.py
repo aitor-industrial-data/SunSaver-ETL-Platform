@@ -90,8 +90,8 @@ def transform_prices_bronze_to_silver(df_raw: pd.DataFrame) -> pd.DataFrame:
             lambda x: x.interpolate(method="linear").ffill().bfill().round(4)
         )
 
-        # unix_time calculado directamente desde datetime_utc tz-aware, sin quitar timezone
-        df["unix_time"] = df["datetime_utc"].astype("int64") // 10**9
+        df["unix_time"] = df["datetime_utc"].apply(lambda dt: int(dt.timestamp()))
+        
 
         logger.info("[TRANSFORM] %d registros Silver de precios producidos", len(df))
         return df
@@ -110,15 +110,18 @@ def load_ree_to_silver(df: pd.DataFrame, table_name: str = "clean_prices") -> bo
     if df.empty:
         return False
 
-    logger.info("[LOAD] Upsertando %d registro(s) en '%s'", len(df), table_name)
+    schema      = "silver"
+    full_table  = f"{schema}.{table_name}"
+    logger.info("[LOAD] Upsertando %d registro(s) en '%s'", len(df), full_table)
     try:
         df_sql = df.copy()
         df_sql["datetime_utc"]     = pd.to_datetime(df_sql["datetime_utc"], utc=True)
         df_sql["_ingested_at_utc"] = pd.to_datetime(df_sql["_ingested_at_utc"], utc=True)
 
         with engine.begin() as conn:
+            conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {schema}"))
             conn.execute(text(f"""
-                CREATE TABLE IF NOT EXISTS {table_name} (
+                CREATE TABLE IF NOT EXISTS {full_table} (
                     unix_time           BIGINT NOT NULL,
                     datetime_utc        TIMESTAMP WITH TIME ZONE NOT NULL,
                     price_type          TEXT    NOT NULL,
@@ -135,15 +138,15 @@ def load_ree_to_silver(df: pd.DataFrame, table_name: str = "clean_prices") -> bo
             update_stmt = ", ".join([f"{c} = EXCLUDED.{c}" for c in update_cols])
 
             conn.execute(text(f"""
-                INSERT INTO {table_name} ({', '.join(cols)})
+                INSERT INTO {full_table} ({', '.join(cols)})
                 VALUES ({', '.join(':' + c for c in cols)})
                 ON CONFLICT (datetime_utc, price_type) DO UPDATE SET {update_stmt}
             """), df_sql.to_dict(orient="records"))
 
-        logger.info("[LOAD] '%s' actualizada — %d registro(s)", table_name, len(df))
+        logger.info("[LOAD] '%s' actualizada — %d registro(s)", full_table, len(df))
         return True
     except Exception as exc:
-        logger.error("[LOAD] Error escribiendo '%s': %s", table_name, exc)
+        logger.error("[LOAD] Error escribiendo '%s': %s", full_table, exc)
         return False
 
 

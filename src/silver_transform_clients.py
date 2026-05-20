@@ -130,15 +130,19 @@ def load_clients_to_silver(df: pd.DataFrame, table_name: str = "clean_clients") 
     if df.empty:
         return False
 
-    logger.info("[LOAD] Escribiendo %d registro(s) en '%s'", len(df), table_name)
+    schema      = "silver"
+    full_table  = f"{schema}.{table_name}"
+    logger.info("[LOAD] Escribiendo %d registro(s) en '%s'", len(df), full_table)
     try:
         # Serializar datetime a string para que to_sql no infiera tipos incorrectos
         df["_ingested_at_utc"] = pd.to_datetime(df["_ingested_at_utc"]).dt.strftime("%Y-%m-%d %H:%M:%S")
 
+
         with engine.begin() as conn:
-            conn.execute(text(f"DROP TABLE IF EXISTS {table_name}"))
+            conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {schema}"))
+            conn.execute(text(f"DROP TABLE IF EXISTS {full_table}"))
             conn.execute(text(f"""
-                CREATE TABLE {table_name} (
+                CREATE TABLE {full_table} (
                     client_id               TEXT NOT NULL PRIMARY KEY,
                     name                    TEXT NOT NULL,
                     description             TEXT NOT NULL,
@@ -158,14 +162,14 @@ def load_clients_to_silver(df: pd.DataFrame, table_name: str = "clean_clients") 
                     installation_cost_eur   REAL NOT NULL,
                     timezone                TEXT NOT NULL,
                     _source_file            TEXT NOT NULL,
-                    _ingested_at_utc        TEXT NOT NULL
+                    _ingested_at_utc        TIMESTAMP WITH TIME ZONE
                 )
             """))
-            df.to_sql(table_name, con=conn, if_exists="append", index=False)
-        logger.info("[LOAD] '%s' reconstruida — %d registro(s)", table_name, len(df))
+            df.to_sql(table_name, con=conn, if_exists="append", index=False, schema=schema)
+        logger.info("[LOAD] '%s' reconstruida — %d registro(s)", full_table, len(df))
         return True
     except Exception as exc:
-        logger.error("[LOAD] Error escribiendo '%s': %s", table_name, exc)
+        logger.error("[LOAD] Error escribiendo '%s': %s", full_table, exc)
         return False
 
 

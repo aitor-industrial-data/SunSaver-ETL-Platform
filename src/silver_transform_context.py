@@ -14,7 +14,7 @@ from logger_config import setup_logging
 load_dotenv()
 logger = setup_logging()
 
-MANIFEST_KEY_S3 = f"{config_paths.get_bronze_prefix()}manifests/_process_manifest_esios_context_d1.json"
+MANIFEST_KEY_S3 = f"{config_paths.get_bronze_prefix()}manifests/_process_manifest_esios_context.json"
 
 
 # ── MANIFEST ──────────────────────────────────────────────────────────────────
@@ -116,7 +116,7 @@ def transform_context_bronze_to_silver(df_raw: pd.DataFrame) -> pd.DataFrame:
               .reset_index(drop=True)
         )
 
-        df["unix_time"] = df["datetime_utc"].astype("int64") // 10**9
+        df["unix_time"] = df["datetime_utc"].apply(lambda dt: int(dt.timestamp()))
 
         return df
 
@@ -135,15 +135,18 @@ def load_context_to_silver(df: pd.DataFrame, table_name: str = "clean_context") 
         logger.warning("[LOAD] El DataFrame de contexto está vacío. Nada que cargar.")
         return False
 
-    logger.info("[LOAD] Upsertando %d registro(s) en PostgreSQL -> '%s'", len(df), table_name)
+    schema      = "silver"
+    full_table  = f"{schema}.{table_name}"
+    logger.info("[LOAD] Upsertando %d registro(s) en PostgreSQL -> '%s'", len(df), full_table)
     try:
         df_sql = df.copy()
         df_sql["datetime_utc"]     = pd.to_datetime(df_sql["datetime_utc"], utc=True)
         df_sql["_ingested_at_utc"] = pd.to_datetime(df_sql["_ingested_at_utc"], utc=True)
 
         with engine.begin() as conn:
+            conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {schema}"))
             conn.execute(text(f"""
-                CREATE TABLE IF NOT EXISTS {table_name} (
+                CREATE TABLE IF NOT EXISTS {full_table} (
                     unix_time           BIGINT NOT NULL,
                     datetime_utc        TIMESTAMP WITH TIME ZONE NOT NULL,
                     indicator_name      VARCHAR(100) NOT NULL,
@@ -161,17 +164,17 @@ def load_context_to_silver(df: pd.DataFrame, table_name: str = "clean_context") 
             update_stmt    = ", ".join([f"{c} = EXCLUDED.{c}" for c in cols_to_update])
 
             conn.execute(text(f"""
-                INSERT INTO {table_name} ({', '.join(cols)})
+                INSERT INTO {full_table} ({', '.join(cols)})
                 VALUES ({', '.join(':' + c for c in cols)})
                 ON CONFLICT (unix_time, datetime_utc, indicator_name)
                 DO UPDATE SET {update_stmt}
             """), df_sql.to_dict(orient="records"))
 
-        logger.info("[LOAD] '%s' actualizada — %d registro(s)", table_name, len(df))
+        logger.info("[LOAD] '%s' actualizada — %d registro(s)", full_table, len(df))
         return True
 
     except Exception as exc:
-        logger.error("[LOAD] Error escribiendo en Postgres ('%s'): %s", table_name, exc)
+        logger.error("[LOAD] Error escribiendo en Postgres ('%s'): %s", full_table, exc)
         return False
 
 

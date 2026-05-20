@@ -37,7 +37,7 @@ def extract_raw_weather_from_json(file_path: str, client_id: str) -> pd.DataFram
         source_name = file_path.split("/")[-1]
         return pd.DataFrame([{
             "client_id":        client_id,
-            "_ingested_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+            "_ingested_at_utc": datetime.now(timezone.utc),
             "_source_file":     source_name,
             "raw_data":         json.dumps(raw),
         }])
@@ -73,7 +73,7 @@ def transform_weather_bronze_to_silver(df_raw: pd.DataFrame) -> pd.DataFrame:
             } for f in forecasts]
 
             df_c = pd.DataFrame(records)
-            df_c["forecast_time_utc"] = pd.to_datetime(df_c["forecast_time_utc"])
+            df_c["forecast_time_utc"] = pd.to_datetime(df_c["forecast_time_utc"], utc=True)
             df_c = df_c.drop_duplicates(subset=["forecast_time_utc"], keep="last")
             df_c = df_c.set_index("forecast_time_utc").resample("1h").asfreq()
 
@@ -86,15 +86,16 @@ def transform_weather_bronze_to_silver(df_raw: pd.DataFrame) -> pd.DataFrame:
             df_c["client_id"]        = client_id
             df_c["_ingested_at_utc"] = row["_ingested_at_utc"]
             df_c["_source_file"]     = row["_source_file"]
-            df_c["unix_time"]        = (
-                (df_c["forecast_time_utc"] - pd.Timestamp("1970-01-01")) // pd.Timedelta("1s")
-            )
+
+            
+            df_c["unix_time"] = df_c["forecast_time_utc"].apply(lambda dt: int(dt.timestamp()))
+
             df_c["is_daylight"] = df_c["pod"].apply(lambda x: 1 if x == "d" else 0)
             all_clients.append(df_c)
 
         df_final = pd.concat(all_clients, ignore_index=True)
-        df_final["rain_prob_norm"]   = df_final["rain_prob_norm"].fillna(0)
-        df_final["_ingested_at_utc"] = pd.to_datetime(df_final["_ingested_at_utc"], errors="coerce")
+        df_final["rain_prob_norm"] = df_final["rain_prob_norm"].fillna(0)
+        df_final["_ingested_at_utc"] = pd.to_datetime(df_final["_ingested_at_utc"], utc=True)
         df_final = df_final.dropna(subset=["client_id", "forecast_time_utc"])
         if "pod" in df_final.columns:
             df_final = df_final.drop(columns=["pod"])
@@ -116,45 +117,51 @@ def load_weather_to_silver(df: pd.DataFrame, table_name: str = "clean_weather") 
     if df.empty:
         return False
 
-    logger.info("[LOAD] Upsertando %d registro(s) en '%s'", len(df), table_name)
+    schema      = "silver"
+    full_table  = f"{schema}.{table_name}"
+    logger.info("[LOAD] Upsertando %d registro(s) en '%s'", len(df), full_table)
     try:
         df_sql = df.copy()
-        df_sql["forecast_time_utc"] = df_sql["forecast_time_utc"].dt.strftime("%Y-%m-%d %H:%M:%S")
-        df_sql["_ingested_at_utc"]  = df_sql["_ingested_at_utc"].dt.strftime("%Y-%m-%d %H:%M:%S")
+        df_sql["forecast_time_utc"] = pd.to_datetime(df_sql["forecast_time_utc"], utc=True)
+        df_sql["_ingested_at_utc"]  = pd.to_datetime(df_sql["_ingested_at_utc"],  utc=True)
 
         with engine.begin() as conn:
+            conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {schema}"))
             conn.execute(text(f"""
-                CREATE TABLE IF NOT EXISTS {table_name} (
+                CREATE TABLE IF NOT EXISTS {full_table} (
                     client_id               TEXT    NOT NULL,
-                    unix_time               INTEGER NOT NULL,
-                    forecast_time_utc       TEXT    NOT NULL,
-                    temp_celsius            REAL,
-                    humidity_pct            REAL,
-                    clouds_pct              REAL,
-                    rain_prob_norm          REAL,
-                    wind_speed_mps          REAL,
+                    unix_time               BIGINT  NOT NULL,
+                    forecast_time_utc       TIMESTAMP WITH TIME ZONE NOT NULL,
+                    temp_celsius            DOUBLE PRECISION,
+                    humidity_pct            DOUBLE PRECISION,
+                    clouds_pct              DOUBLE PRECISION,
+                    rain_prob_norm          DOUBLE PRECISION,
+                    wind_speed_mps          DOUBLE PRECISION,
                     weather_id              INTEGER,
                     weather_main            TEXT,
                     weather_description     TEXT,
                     is_daylight             INTEGER,
                     _source_file            TEXT,
-                    _ingested_at_utc        TEXT NOT NULL,
+                    _ingested_at_utc        TIMESTAMP WITH TIME ZONE NOT NULL,
                     PRIMARY KEY (client_id, unix_time)
                 )
             """))
+
             cols        = list(df_sql.columns)
-            update_cols = [c for c in cols if c not in ["client_id", "unix_time"]]
+            pk_cols     = ["client_id", "unix_time"]
+            update_cols = [c for c in cols if c not in pk_cols]
             update_stmt = ", ".join([f"{c} = EXCLUDED.{c}" for c in update_cols])
+
             conn.execute(text(f"""
-                INSERT INTO {table_name} ({', '.join(cols)})
+                INSERT INTO {full_table} ({', '.join(cols)})
                 VALUES ({', '.join(':' + c for c in cols)})
                 ON CONFLICT (client_id, unix_time) DO UPDATE SET {update_stmt}
             """), df_sql.to_dict(orient="records"))
 
-        logger.info("[LOAD] '%s' actualizada — %d registro(s)", table_name, len(df))
+        logger.info("[LOAD] '%s' actualizada — %d registro(s)", full_table, len(df))
         return True
     except Exception as exc:
-        logger.error("[LOAD] Error escribiendo '%s': %s", table_name, exc)
+        logger.error("[LOAD] Error escribiendo '%s': %s", full_table, exc)
         return False
 
 
@@ -185,15 +192,21 @@ def transform_openweather() -> int:
                 raise ValueError("Transformación produjo DataFrame vacío")
             rows = len(df_silver)
             if load_weather_to_silver(df_silver):
-                task.update({"status": "success", "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")})
+                task.update({
+                    "status":     "success",
+                    "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+                })
                 task.pop("error", None)
                 session_rows += rows
                 session_ok   += 1
             else:
                 raise ValueError("Silver load devolvió False")
         except Exception as exc:
-            task.update({"status": "error", "error": str(exc),
-                         "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")})
+            task.update({
+                "status":     "error",
+                "error":      str(exc),
+                "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+            })
             session_err += 1
             logger.error("[ERROR] client_id=%s %s: %s", client_id, fname, exc)
 

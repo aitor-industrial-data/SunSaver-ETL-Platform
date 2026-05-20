@@ -87,14 +87,16 @@ def extract_openweather(client_table: str = "clean_clients") -> int:
     engine = get_engine()
     if engine is None:
         return 0
-
+    
+    schema      = "silver"
+    full_table  = f"{schema}.{client_table}"
     try:
         import pandas as pd
         df_clients = pd.read_sql(
-            f"SELECT client_id, latitude, longitude FROM {client_table}", con=engine
+            f"SELECT client_id, latitude, longitude FROM {full_table}", con=engine
         )
     except Exception as exc:
-        logger.error("[EXTRACT] Error leyendo clientes desde '%s': %s", client_table, exc)
+        logger.error("[EXTRACT] Error leyendo clientes desde '%s': %s", full_table, exc)
         return 0
 
     logger.info("[EXTRACT] %d cliente(s) cargados", len(df_clients))
