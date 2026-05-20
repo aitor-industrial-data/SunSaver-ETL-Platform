@@ -20,13 +20,13 @@
       ],
 
       "secrets": [
-        { "name": "DB_USER",         "valueFrom": "arn:aws:ssm:eu-south-2:610140802215:parameter/sunsaver/dev/DB_USER"         },
-        { "name": "DB_PASS",         "valueFrom": "arn:aws:ssm:eu-south-2:610140802215:parameter/sunsaver/dev/DB_PASS"         },
-        { "name": "DB_HOST",         "valueFrom": "arn:aws:ssm:eu-south-2:610140802215:parameter/sunsaver/dev/DB_HOST"         },
-        { "name": "DB_NAME",         "valueFrom": "arn:aws:ssm:eu-south-2:610140802215:parameter/sunsaver/dev/DB_NAME"         },
-        { "name": "DB_PORT",         "valueFrom": "arn:aws:ssm:eu-south-2:610140802215:parameter/sunsaver/dev/DB_PORT"         },
-        { "name": "ESIOS_API_KEY",   "valueFrom": "arn:aws:ssm:eu-south-2:610140802215:parameter/sunsaver/dev/ESIOS_API_KEY"   },
-        { "name": "WEATHER_API_KEY", "valueFrom": "arn:aws:ssm:eu-south-2:610140802215:parameter/sunsaver/dev/WEATHER_API_KEY" }
+        { "name": "DB_USER",         "valueFrom": "arn:aws:ssm:eu-south-2:610140802215:parameter/sunsaver/prd/DB_USER"         },
+        { "name": "DB_PASS",         "valueFrom": "arn:aws:ssm:eu-south-2:610140802215:parameter/sunsaver/prd/DB_PASS"         },
+        { "name": "DB_HOST",         "valueFrom": "arn:aws:ssm:eu-south-2:610140802215:parameter/sunsaver/prd/DB_HOST"         },
+        { "name": "DB_NAME",         "valueFrom": "arn:aws:ssm:eu-south-2:610140802215:parameter/sunsaver/prd/DB_NAME"         },
+        { "name": "DB_PORT",         "valueFrom": "arn:aws:ssm:eu-south-2:610140802215:parameter/sunsaver/prd/DB_PORT"         },
+        { "name": "ESIOS_API_KEY",   "valueFrom": "arn:aws:ssm:eu-south-2:610140802215:parameter/sunsaver/prd/ESIOS_API_KEY"   },
+        { "name": "WEATHER_API_KEY", "valueFrom": "arn:aws:ssm:eu-south-2:610140802215:parameter/sunsaver/prd/WEATHER_API_KEY" }
       ],
 
       "logConfiguration": {
