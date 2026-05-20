@@ -4,7 +4,7 @@
   "requiresCompatibilities": ["FARGATE"],
   "cpu": "1024",
   "memory": "2048",
-  "executionRoleArn": "arn:aws:iam::610140802215:role/ecsTaskExecutionRole",
+  "executionRoleArn": "arn:aws:iam::610140802215:role/sunsaver-etl-task-role",
   "taskRoleArn":      "arn:aws:iam::610140802215:role/sunsaver-etl-task-role",
   "containerDefinitions": [
     {
