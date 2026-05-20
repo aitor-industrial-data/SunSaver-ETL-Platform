@@ -14,7 +14,7 @@
 
       "environment": [
         { "name": "AWS_REGION",    "value": "eu-south-2"         },
-        { "name": "S3_BUCKET",     "value": "sunsaver-bronze-dev" },
+        { "name": "S3_BUCKET",     "value": "sunsaver-bronze" },
         { "name": "BRONZE_PREFIX", "value": "bronze/"             },
         { "name": "ENVIRONMENT",   "value": "PRD"}
       ],
