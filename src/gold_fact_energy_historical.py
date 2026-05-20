@@ -43,26 +43,26 @@ def build_fact_energy_historical(engine: sqlalchemy.engine.Engine) -> int:
             conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {schema}"))
             conn.execute(text(f"""
                 CREATE TABLE IF NOT EXISTS {full_table} (
-                    client_id               TEXT             NOT NULL,
-                    unix_time               BIGINT           NOT NULL,
-                    forecast_time_utc       TIMESTAMP WITH TIME ZONE NOT NULL,
-                    pv_power_gen_kw         DOUBLE PRECISION,
-                    pv_performance_ratio    DOUBLE PRECISION,
-                    poa_wm2                 DOUBLE PRECISION,
-                    t_cell_celsius          DOUBLE PRECISION,
-                    power_consumption_kw    DOUBLE PRECISION,
-                    temp_celsius            DOUBLE PRECISION,
-                    humidity_pct            DOUBLE PRECISION,
-                    clouds_pct              DOUBLE PRECISION,
-                    rain_prob_norm          DOUBLE PRECISION,
-                    wind_speed_mps          DOUBLE PRECISION,
-                    weather_id              INTEGER,
-                    price_pvpc_eur_mwh      DOUBLE PRECISION,
-                    demand_real_mw          DOUBLE PRECISION,
-                    pv_gen_mw               DOUBLE PRECISION,
-                    co2_tco2_mw             DOUBLE PRECISION,
-                    upward_imb              DOUBLE PRECISION,
-                    _loaded_at_utc          TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
+                    client_id                    TEXT             NOT NULL,
+                    unix_time                    BIGINT           NOT NULL,
+                    forecast_time_utc            TIMESTAMP WITH TIME ZONE NOT NULL,
+                    pv_gen_kw           DOUBLE PRECISION,
+                    pv_performance_ratio  DOUBLE PRECISION,
+                    poa_wm2               DOUBLE PRECISION,
+                    t_cell_celsius        DOUBLE PRECISION,
+                    consumption_kw        DOUBLE PRECISION,
+                    temp_celsius          DOUBLE PRECISION,
+                    humidity_pct          DOUBLE PRECISION,
+                    clouds_pct            DOUBLE PRECISION,
+                    rain_prob_norm        DOUBLE PRECISION,
+                    wind_speed_mps        DOUBLE PRECISION,
+                    weather_id            INTEGER,
+                    national_price_pvpc_eur_mwh  DOUBLE PRECISION,
+                    national_demand_mw           DOUBLE PRECISION,
+                    national_pv_gen_mw           DOUBLE PRECISION,
+                    national_co2_tco2_mwh        DOUBLE PRECISION,
+                    national_upward_imb_mw       DOUBLE PRECISION,
+                    _loaded_at_utc               TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
                     PRIMARY KEY (client_id, unix_time)
                 )
             """))
@@ -81,33 +81,33 @@ def build_fact_energy_historical(engine: sqlalchemy.engine.Engine) -> int:
             result = conn.execute(text(f"""
                 INSERT INTO {full_table} (
                     client_id, unix_time, forecast_time_utc,
-                    pv_power_gen_kw, pv_performance_ratio, poa_wm2,
-                    t_cell_celsius, power_consumption_kw,
+                    pv_gen_kw, pv_performance_ratio, poa_wm2,
+                    t_cell_celsius, consumption_kw,
                     temp_celsius, humidity_pct, clouds_pct,
                     rain_prob_norm, wind_speed_mps, weather_id,
-                    price_pvpc_eur_mwh,
-                    demand_real_mw, pv_gen_mw, co2_tco2_mw, upward_imb
+                    national_price_pvpc_eur_mwh,
+                    national_demand_mw, national_pv_gen_mw, national_co2_tco2_mwh, national_upward_imb_mw
                 )
                 SELECT
                     f.client_id,
                     f.unix_time,
                     f.forecast_time_utc,
-                    f.pv_power_gen_kw,
-                    f.pv_performance_ratio,
-                    f.poa_wm2,
-                    f.t_cell_celsius,
-                    f.power_consumption_kw,
-                    f.temp_celsius,
-                    f.humidity_pct,
-                    f.clouds_pct,
-                    f.rain_prob_norm,
-                    f.wind_speed_mps,
-                    f.weather_id,
-                    pvpc.price_euro_mwh                         AS price_pvpc_eur_mwh,
-                    ctx.demand_real_mw,
-                    ctx.pv_gen_mw,
-                    ctx.co2_tco2_mw,
-                    ctx.upward_imb
+                    f.pv_power_gen_kw           AS pv_gen_kw,
+                    f.pv_performance_ratio       AS pv_performance_ratio,
+                    f.poa_wm2                    AS poa_wm2,
+                    f.t_cell_celsius             AS t_cell_celsius,
+                    f.power_consumption_kw       AS consumption_kw,
+                    f.temp_celsius               AS temp_celsius,
+                    f.humidity_pct               AS humidity_pct,
+                    f.clouds_pct                 AS clouds_pct,
+                    f.rain_prob_norm             AS rain_prob_norm,
+                    f.wind_speed_mps             AS wind_speed_mps,
+                    f.weather_id                 AS weather_id,
+                    pvpc.price_euro_mwh          AS national_price_pvpc_eur_mwh,
+                    ctx.demand_real_mw           AS national_demand_mw,
+                    ctx.pv_gen_mw                AS national_pv_gen_mw,
+                    ctx.co2_tco2_mw              AS national_co2_tco2_mwh,
+                    ctx.upward_imb               AS national_upward_imb_mw
                 FROM gold.fact_energy_forecast f
 
                 LEFT JOIN silver.clean_prices pvpc
@@ -129,24 +129,24 @@ def build_fact_energy_historical(engine: sqlalchemy.engine.Engine) -> int:
 
                 ON CONFLICT (client_id, unix_time)
                 DO UPDATE SET
-                    forecast_time_utc    = EXCLUDED.forecast_time_utc,
-                    pv_power_gen_kw      = EXCLUDED.pv_power_gen_kw,
+                    forecast_time_utc           = EXCLUDED.forecast_time_utc,
+                    pv_gen_kw          = EXCLUDED.pv_gen_kw,
                     pv_performance_ratio = EXCLUDED.pv_performance_ratio,
                     poa_wm2              = EXCLUDED.poa_wm2,
                     t_cell_celsius       = EXCLUDED.t_cell_celsius,
-                    power_consumption_kw = EXCLUDED.power_consumption_kw,
+                    consumption_kw       = EXCLUDED.consumption_kw,
                     temp_celsius         = EXCLUDED.temp_celsius,
                     humidity_pct         = EXCLUDED.humidity_pct,
                     clouds_pct           = EXCLUDED.clouds_pct,
                     rain_prob_norm       = EXCLUDED.rain_prob_norm,
                     wind_speed_mps       = EXCLUDED.wind_speed_mps,
                     weather_id           = EXCLUDED.weather_id,
-                    price_pvpc_eur_mwh   = EXCLUDED.price_pvpc_eur_mwh,
-                    demand_real_mw       = EXCLUDED.demand_real_mw,
-                    pv_gen_mw            = EXCLUDED.pv_gen_mw,
-                    co2_tco2_mw          = EXCLUDED.co2_tco2_mw,
-                    upward_imb           = EXCLUDED.upward_imb,
-                    _loaded_at_utc       = now()
+                    national_price_pvpc_eur_mwh = EXCLUDED.national_price_pvpc_eur_mwh,
+                    national_demand_mw          = EXCLUDED.national_demand_mw,
+                    national_pv_gen_mw          = EXCLUDED.national_pv_gen_mw,
+                    national_co2_tco2_mwh       = EXCLUDED.national_co2_tco2_mwh,
+                    national_upward_imb_mw      = EXCLUDED.national_upward_imb_mw,
+                    _loaded_at_utc              = now()
             """), {"now_unix": now_unix})
 
             rows_affected = result.rowcount
