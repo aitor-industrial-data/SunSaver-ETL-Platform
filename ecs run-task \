@@ -1,0 +1,122 @@
+{
+    "taskDefinition": {
+        "taskDefinitionArn": "arn:aws:ecs:eu-south-2:610140802215:task-definition/sunsaver-etl-task:12",
+        "containerDefinitions": [
+            {
+                "name": "sunsaver-etl",
+                "image": "610140802215.dkr.ecr.eu-south-2.amazonaws.com/sunsaver-etl:latest",
+                "cpu": 0,
+                "portMappings": [],
+                "essential": true,
+                "environment": [
+                    {
+                        "name": "S3_BUCKET",
+                        "value": "sunsaver-bronze-dev"
+                    },
+                    {
+                        "name": "BRONZE_PREFIX",
+                        "value": "bronze/"
+                    },
+                    {
+                        "name": "AWS_REGION",
+                        "value": "eu-south-2"
+                    }
+                ],
+                "mountPoints": [],
+                "volumesFrom": [],
+                "secrets": [
+                    {
+                        "name": "DB_USER",
+                        "valueFrom": "arn:aws:ssm:eu-south-2:610140802215:parameter/sunsaver/dev/DB_USER"
+                    },
+                    {
+                        "name": "DB_PASS",
+                        "valueFrom": "arn:aws:ssm:eu-south-2:610140802215:parameter/sunsaver/dev/DB_PASS"
+                    },
+                    {
+                        "name": "DB_HOST",
+                        "valueFrom": "arn:aws:ssm:eu-south-2:610140802215:parameter/sunsaver/dev/DB_HOST"
+                    },
+                    {
+                        "name": "DB_NAME",
+                        "valueFrom": "arn:aws:ssm:eu-south-2:610140802215:parameter/sunsaver/dev/DB_NAME"
+                    },
+                    {
+                        "name": "DB_PORT",
+                        "valueFrom": "arn:aws:ssm:eu-south-2:610140802215:parameter/sunsaver/dev/DB_PORT"
+                    },
+                    {
+                        "name": "ESIOS_API_KEY",
+                        "valueFrom": "arn:aws:ssm:eu-south-2:610140802215:parameter/sunsaver/dev/ESIOS_API_KEY"
+                    },
+                    {
+                        "name": "WEATHER_API_KEY",
+                        "valueFrom": "arn:aws:ssm:eu-south-2:610140802215:parameter/sunsaver/dev/WEATHER_API_KEY"
+                    }
+                ],
+                "logConfiguration": {
+                    "logDriver": "awslogs",
+                    "options": {
+                        "awslogs-group": "/ecs/sunsaver-etl",
+                        "awslogs-create-group": "true",
+                        "awslogs-region": "eu-south-2",
+                        "awslogs-stream-prefix": "ecs"
+                    }
+                },
+                "systemControls": []
+            }
+        ],
+        "family": "sunsaver-etl-task",
+        "taskRoleArn": "arn:aws:iam::610140802215:role/sunsaver-etl-task-role",
+        "executionRoleArn": "arn:aws:iam::610140802215:role/ecsTaskExecutionRole",
+        "networkMode": "awsvpc",
+        "revision": 12,
+        "volumes": [],
+        "status": "ACTIVE",
+        "requiresAttributes": [
+            {
+                "name": "com.amazonaws.ecs.capability.logging-driver.awslogs"
+            },
+            {
+                "name": "ecs.capability.execution-role-awslogs"
+            },
+            {
+                "name": "com.amazonaws.ecs.capability.ecr-auth"
+            },
+            {
+                "name": "com.amazonaws.ecs.capability.docker-remote-api.1.19"
+            },
+            {
+                "name": "com.amazonaws.ecs.capability.task-iam-role"
+            },
+            {
+                "name": "ecs.capability.execution-role-ecr-pull"
+            },
+            {
+                "name": "ecs.capability.secrets.ssm.environment-variables"
+            },
+            {
+                "name": "com.amazonaws.ecs.capability.docker-remote-api.1.18"
+            },
+            {
+                "name": "ecs.capability.task-eni"
+            },
+            {
+                "name": "com.amazonaws.ecs.capability.docker-remote-api.1.29"
+            }
+        ],
+        "placementConstraints": [],
+        "compatibilities": [
+            "EC2",
+            "FARGATE",
+            "MANAGED_INSTANCES"
+        ],
+        "requiresCompatibilities": [
+            "FARGATE"
+        ],
+        "cpu": "1024",
+        "memory": "2048",
+        "registeredAt": "2026-05-20T12:16:03.765000+02:00",
+        "registeredBy": "arn:aws:iam::610140802215:user/aitor166"
+    }
+}

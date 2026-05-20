@@ -46,7 +46,7 @@ def extract_raw_json_from_ree() -> Union[dict, bool]:
             if hours_retrieved == 72:
                 logger.info("[EXTRACT] Full 3-day dataset secured (including tomorrow).")
             elif hours_retrieved == 48:
-                logger.warning("[EXTRACT] Only yesterday and today retrieved. Tomorrow is not available yet.")
+                logger.warning("[EXTRACT] Only yesterday and today retrieved. Tomorrow is not available yet(pvp mañana no disponible).")
             else:
                 logger.info("[EXTRACT] Retrieved %d hourly points.", hours_retrieved)
                 
