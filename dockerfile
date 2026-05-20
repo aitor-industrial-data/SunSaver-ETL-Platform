@@ -20,7 +20,7 @@ ENV PYTHONPATH=/app/src
 ENV PYTHONUNBUFFERED=1
 
 # No definir LOCAL_DEV para que use SSM en AWS
-# ENV LOCAL_DEV=0q
+# ENV LOCAL_DEV=0
 
 # Comando por defecto
 CMD ["python", "src/run.py"]
