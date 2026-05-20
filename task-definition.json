@@ -20,7 +20,7 @@
       ],
 
       "secrets": [
-        { "name": "DB_USER",         "valueFrom": "arn:aws:ssm:eu-south-2:610140802215:parameter/sunsaver/dev/DB_USER"         },
+        { "name": "DB_USER",         "valueFrom": "arn:aws:ssm:eu-south-2:610140802215:parameter/sunsaver/prd/DB_USER"         },
         { "name": "DB_PASS",         "valueFrom": "arn:aws:ssm:eu-south-2:610140802215:parameter/sunsaver/dev/DB_PASS"         },
         { "name": "DB_HOST",         "valueFrom": "arn:aws:ssm:eu-south-2:610140802215:parameter/sunsaver/dev/DB_HOST"         },
         { "name": "DB_NAME",         "valueFrom": "arn:aws:ssm:eu-south-2:610140802215:parameter/sunsaver/dev/DB_NAME"         },
