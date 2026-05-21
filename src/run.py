@@ -25,8 +25,10 @@ import silver_calc_pv_generation
 import gold_dim_clients
 import gold_dim_datetime
 import gold_dim_weather
+import gold_dim_assets
 import gold_fact_energy_historical
 import gold_fact_energy_forecast
+import gold_dim_assets
 import gold_fact_energy_decisions
 import report_generator
 
@@ -50,6 +52,8 @@ PIPELINE: list[tuple[int, str, Callable]] = [
     (6, "gold_dim_clients",            gold_dim_clients.load_dim_client),
     (6, "gold_dim_datetime",           gold_dim_datetime.load_dim_datetime),
     (6, "gold_dim_weather",            gold_dim_weather.load_dim_weather),
+    (6, "gold_dim_assets",             gold_dim_assets.load_dim_assets),
+    (6, "gold_dim_assets",             gold_dim_assets.load_dim_assets),
     (6, "gold_fact_energy_historical", gold_fact_energy_historical.load_fact_energy_historical),
     (7, "gold_fact_energy_forecast",   gold_fact_energy_forecast.load_fact_energy_forecast),
     (8, "gold_fact_energy_decisions",  lambda: gold_fact_energy_decisions.build_energy_decisions("CLT-0001")),
