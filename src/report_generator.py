@@ -8,12 +8,9 @@ Entrada:
 
 Salida:
     · HTML  → data_storage/reports/YYYY-MM-DD/{client_id}_energy_report.html
-    · PDF   → misma carpeta (requiere playwright: pip install playwright &&
-                             playwright install chromium)
 
 Autoejectable: genera informe para CLT-0001 si se lanza directamente.
     python report_generator.py              → solo HTML
-    python report_generator.py CLT-0001 --pdf  → HTML + PDF
 """
 
 from __future__ import annotations
@@ -33,6 +30,12 @@ logger = setup_logging()
 
 # ── RUTAS DE SALIDA ───────────────────────────────────────────────────────────
 REPORTS_DIR = Path("data_storage") / "reports"
+
+# ── CONFIG S3 (solo aplica si ENVIRONMENT != DEV) ─────────────────────────────
+ENVIRONMENT = os.getenv("ENVIRONMENT", "DEV").upper()
+S3_BUCKET   = os.getenv("S3_BUCKET")
+S3_PREFIX   = os.getenv("S3_PREFIX", "reports")
+AWS_REGION  = os.getenv("AWS_REGION", "eu-south-2")
 
 # ── ICONOS POR TIPO DE ACTIVO ─────────────────────────────────────────────────
 ASSET_ICONS = {
@@ -459,11 +462,40 @@ def _output_dir(client_id: str, report_date: str) -> Path:
     return d
 
 
-def save_html(html: str, client_id: str, report_date: str) -> Path:
-    out = _output_dir(client_id, report_date) / f"{client_id}_energy_report.html"
-    out.write_text(html, encoding="utf-8")
-    logger.info("[HTML] Informe guardado: %s", out)
-    return out
+def save_html(html: str, client_id: str, report_date: str) -> Path | None:
+    if ENVIRONMENT == "DEV":
+        out = _output_dir(client_id, report_date) / f"{client_id}_energy_report.html"
+        out.write_text(html, encoding="utf-8")
+        logger.info("[HTML] Informe guardado local: %s", out)
+        return out
+    else:
+        _upload_s3(html, client_id, report_date)
+        return None
+
+
+def _upload_s3(html: str, client_id: str, report_date: str) -> None:
+    import boto3
+    from botocore.exceptions import BotoCoreError, ClientError
+
+    if not S3_BUCKET:
+        logger.error("[HTML] S3_BUCKET no definido en .env — abortando upload")
+        return
+
+    dated_key  = f"{S3_PREFIX}/{report_date}/{client_id}_energy_report.html"
+    latest_key = f"{S3_PREFIX}/latest.html"
+    content    = html.encode("utf-8")
+    extra      = {"ContentType": "text/html; charset=utf-8"}
+
+    try:
+        s3 = boto3.client("s3", region_name=AWS_REGION)
+        s3.put_object(Bucket=S3_BUCKET, Key=dated_key,  Body=content, **extra)
+        logger.info("[HTML] ✓ Histórico : s3://%s/%s", S3_BUCKET, dated_key)
+        s3.put_object(Bucket=S3_BUCKET, Key=latest_key, Body=content, **extra)
+        logger.info("[HTML] ✓ Latest    : s3://%s/%s", S3_BUCKET, latest_key)
+        base_url = f"http://{S3_BUCKET}.s3-website.{AWS_REGION}.amazonaws.com"
+        logger.info("[HTML] URL fija CV → %s/%s", base_url, latest_key)
+    except (BotoCoreError, ClientError) as exc:
+        logger.error("[HTML] Error en upload S3: %s", exc)
 
 
 # ── ENTRY POINT ───────────────────────────────────────────────────────────────
@@ -485,7 +517,6 @@ def generate_report(client_id: str) -> dict[str, Path | None]:
     html_path   = save_html(html, client_id, report_date)
 
     logger.info("[DONE] generate_report — fecha: %s", report_date)
-
     return {"html": html_path}
 
 
