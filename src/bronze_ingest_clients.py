@@ -33,7 +33,7 @@ def extract_clients_from_excel() -> list[dict]:
         return []
 
     try:
-        df = pd.read_excel(excel_path)
+        df = pd.read_excel(excel_path, sheet_name="Clients Data")
     except ImportError:
         logger.error("[EXTRACT] Falta dependencia 'openpyxl' — pip install openpyxl")
         return []
