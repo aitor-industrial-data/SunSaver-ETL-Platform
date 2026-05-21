@@ -12,6 +12,8 @@ Salida:
                              playwright install chromium)
 
 Autoejectable: genera informe para CLT-0001 si se lanza directamente.
+    python report_generator.py              → solo HTML
+    python report_generator.py CLT-0001 --pdf  → HTML + PDF
 """
 
 from __future__ import annotations
@@ -57,19 +59,41 @@ URGENCY_LABEL = {
     "low":      "OPCIONAL",
 }
 
+# Mapa completo OpenWeatherMap
 WX_ICON = {
+    # Tormenta (2xx)
+    200: "⛈️", 201: "⛈️", 202: "⛈️", 210: "⛈️", 211: "⛈️",
+    212: "⛈️", 221: "⛈️", 230: "⛈️", 231: "⛈️", 232: "⛈️",
+    # Llovizna (3xx)
+    300: "🌦", 301: "🌦", 302: "🌦", 310: "🌦", 311: "🌦",
+    312: "🌦", 313: "🌦", 314: "🌦", 321: "🌦",
+    # Lluvia (5xx)
+    500: "🌧", 501: "🌧", 502: "🌧", 503: "🌧", 504: "🌧",
+    511: "🌨", 520: "🌧", 521: "🌧", 522: "🌧", 531: "🌧",
+    # Nieve (6xx)
+    600: "🌨", 601: "🌨", 602: "🌨", 611: "🌨", 612: "🌨",
+    613: "🌨", 615: "🌨", 616: "🌨", 620: "🌨", 621: "🌨", 622: "🌨",
+    # Atmósfera (7xx)
+    701: "🌫", 711: "🌫", 721: "🌫", 731: "🌫", 741: "🌫",
+    751: "🌫", 761: "🌫", 762: "🌫", 771: "🌫", 781: "🌪",
+    # Despejado / nubes (8xx)
     800: "☀️", 801: "🌤", 802: "⛅", 803: "🌥", 804: "☁️",
-    500: "🌧", 501: "🌧", 502: "⛈️", 300: "🌦", 600: "🌨",
 }
 
 
 # ── HELPERS HTML ──────────────────────────────────────────────────────────────
 
 def _wx_icon(weather_id: int | None) -> str:
+    """Devuelve emoji para el weather_id de OpenWeatherMap.
+    Busca primero exacto, luego por centena, luego fallback."""
     if weather_id is None:
         return "🌡"
-    base = (weather_id // 100) * 100
-    return WX_ICON.get(weather_id, WX_ICON.get(base, "🌡"))
+    icon = WX_ICON.get(int(weather_id))
+    if icon:
+        return icon
+    # fallback por centena
+    base = (int(weather_id) // 100) * 100
+    return WX_ICON.get(base, "🌡")
 
 
 def _pvp_bar_color(pvp: float | None) -> str:
@@ -97,47 +121,45 @@ def _fmt_date_es(date_str: str) -> str:
 # ── SECCIONES HTML ────────────────────────────────────────────────────────────
 
 def _render_header(data: dict) -> str:
-    client  = data["client"]
-    today   = data["today"]
-    kpis    = today["kpis"]
-    gen_at  = data["generated_at"]
-    date_es = _fmt_date_es(today["date"])
-
+    client    = data["client"]
+    today     = data["today"]
+    kpis      = today["kpis"]
+    gen_at    = data["generated_at"]
+    date_es   = _fmt_date_es(today["date"])
     rel_color = _reliability_color(kpis["forecast_reliability"])
 
     return f"""
     <div class="header">
       <div class="header-left">
-        <div class="badge">
-          <span class="dot"></span>INFORME ACTIVO
-        </div>
+        <div class="badge"><span class="dot"></span>INFORME ACTIVO</div>
         <h1>Estrategia Energética · Plan de Acción</h1>
-        <p class="subtitle">{client['name']} &nbsp;·&nbsp; Turno completo</p>
+        <p class="subtitle">{client['name']} &nbsp;·&nbsp; Turno completo · Hora local</p>
       </div>
       <div class="header-right">
         <div class="client-id">{client['client_id']}</div>
         <div class="report-date">{date_es}</div>
         <div class="generated">Generado: {gen_at}</div>
         <div class="reliability" style="color:{rel_color}">
-          ● Fiabilidad previsión: <strong>{kpis['forecast_reliability'].upper()}</strong>
+          ● Fiabilidad: <strong>{kpis['forecast_reliability'].upper()}</strong>
           {'· PVP confirmado OMIE' if kpis['has_pvp'] else '· Sin PVP (D+1 pendiente)'}
         </div>
       </div>
-    </div>
-    """
+    </div>"""
 
 
 def _render_kpis(kpis: dict) -> str:
-    pvp_min_str = f"{kpis['pvp_min']:.0f} €/MWh · {kpis['pvp_min_hour']}h" if kpis['pvp_min'] else "—"
-    pvp_max_str = f"{kpis['pvp_max']:.0f} €/MWh · {kpis['pvp_max_hour']}h" if kpis['pvp_max'] else "—"
+    pvp_min_str = (f"{kpis['pvp_min']:.0f} €/MWh · {kpis['pvp_min_hour']:02d}h"
+                   if kpis["pvp_min"] is not None else "—")
+    pvp_max_str = (f"{kpis['pvp_max']:.0f} €/MWh · {kpis['pvp_max_hour']:02d}h"
+                   if kpis["pvp_max"] is not None else "—")
 
     cards = [
-        ("FV pico hoy",        f"{kpis['pv_peak_kw']} kW",  f"Hora {kpis['pv_peak_hour']}h", "#58a6ff"),
-        ("PVP mínimo",         pvp_min_str,                  "Ventana económica",              "#3fb950"),
-        ("PVP máximo",         pvp_max_str,                  "Evitar consumo",                 "#f85149"),
-        ("Horas solar activa", f"{kpis['hours_solar']}h",    "FV > 1 kW",                      "#58a6ff"),
-        ("Horas precio bajo",  f"{kpis['hours_cheap']}h",    f"< 80 €/MWh",                    "#3fb950"),
-        ("Horas precio alto",  f"{kpis['hours_expensive']}h",f"> 150 €/MWh",                   "#f85149"),
+        ("FV pico mañana",     f"{kpis['pv_peak_kw']} kW",   f"{kpis['pv_peak_hour']:02d}h hora local", "#58a6ff"),
+        ("PVP mínimo",         pvp_min_str,                    "Ventana económica",                       "#3fb950"),
+        ("PVP máximo",         pvp_max_str,                    "Evitar consumo",                          "#f85149"),
+        ("Horas solar activa", f"{kpis['hours_solar']}h",      "FV > 1 kW",                               "#58a6ff"),
+        ("Horas precio bajo",  f"{kpis['hours_cheap']}h",      "< 80 €/MWh",                              "#3fb950"),
+        ("Horas precio alto",  f"{kpis['hours_expensive']}h",  "> 150 €/MWh",                             "#f85149"),
     ]
 
     items = ""
@@ -156,27 +178,35 @@ def _render_charts(today: dict) -> str:
     pvp_hours = today["pvp_hours"]
     pv_hours  = today["pv_hours"]
 
-    # Datos para Chart.js
-    labels    = json.dumps([f"{r['hour']}h" for r in pv_hours])
-    pv_data   = json.dumps([round(r["pv_power_gen_kw"], 2) for r in pv_hours])
-    pvp_data  = json.dumps([round(r["price_pvpc_eur_mwh"], 1) if r["price_pvpc_eur_mwh"] else None
-                            for r in pvp_hours])
-    pvp_colors = json.dumps([_pvp_bar_color(r["price_pvpc_eur_mwh"]) for r in pvp_hours])
+    # Asegurar cobertura completa 00–23h; rellenar huecos con null
+    pvp_map = {r["hour"]: r for r in pvp_hours}
+    pv_map  = {r["hour"]: r for r in pv_hours}
+
+    labels     = json.dumps([f"{h:02d}h" for h in range(24)])
+    pv_data    = json.dumps([round(pv_map[h]["pv_power_gen_kw"], 2) if h in pv_map else 0
+                             for h in range(24)])
+    pvp_data   = json.dumps([round(pvp_map[h]["price_pvpc_eur_mwh"], 1)
+                              if h in pvp_map and pvp_map[h]["price_pvpc_eur_mwh"] is not None
+                              else None
+                              for h in range(24)])
+    pvp_colors = json.dumps([_pvp_bar_color(pvp_map[h]["price_pvpc_eur_mwh"]
+                              if h in pvp_map else None)
+                             for h in range(24)])
 
     return f"""
     <div class="section">
       <div class="section-title">Precio de mercado (PVP) · Generación fotovoltaica</div>
       <div class="chart-row">
         <div class="chart-box">
-          <div class="chart-label">PVP €/MWh — hoy</div>
+          <div class="chart-label">PVP €/MWh — 00h a 23h hora local</div>
           <div style="position:relative;height:180px;">
-            <canvas id="chartPVP" role="img" aria-label="Precio PVP horario">Precios OMIE del día.</canvas>
+            <canvas id="chartPVP"></canvas>
           </div>
         </div>
         <div class="chart-box">
-          <div class="chart-label">Generación FV prevista (kW)</div>
+          <div class="chart-label">Generación FV prevista (kW) — 00h a 23h hora local</div>
           <div style="position:relative;height:180px;">
-            <canvas id="chartPV" role="img" aria-label="Generación fotovoltaica">Curva FV del día.</canvas>
+            <canvas id="chartPV"></canvas>
           </div>
         </div>
       </div>
@@ -190,15 +220,13 @@ def _render_charts(today: dict) -> str:
 
       new Chart(document.getElementById('chartPVP'), {{
         type: 'bar',
-        data: {{
-          labels: labels,
-          datasets: [{{ data: pvpData, backgroundColor: pvpColors,
-                        borderRadius: 3, borderSkipped: false }}]
-        }},
+        data: {{ labels, datasets: [{{ data: pvpData, backgroundColor: pvpColors,
+                                       borderRadius: 3, borderSkipped: false }}] }},
         options: {{
           responsive: true, maintainAspectRatio: false,
           plugins: {{ legend: {{ display: false }},
-            tooltip: {{ callbacks: {{ label: ctx => ctx.parsed.y != null ? ctx.parsed.y.toFixed(0) + ' €/MWh' : 'Sin dato' }} }} }},
+            tooltip: {{ callbacks: {{ label: ctx => ctx.parsed.y != null
+              ? ctx.parsed.y.toFixed(0) + ' €/MWh' : 'Sin dato' }} }} }},
           scales: {{
             x: {{ ticks: {{ color:'#8b949e', font:{{ size:9 }}, autoSkip:false, maxRotation:0 }},
                   grid: {{ color:'rgba(255,255,255,0.05)' }} }},
@@ -210,13 +238,9 @@ def _render_charts(today: dict) -> str:
 
       new Chart(document.getElementById('chartPV'), {{
         type: 'line',
-        data: {{
-          labels: labels,
-          datasets: [{{ data: pvData, borderColor:'#58a6ff',
-                        backgroundColor:'rgba(88,166,255,0.15)',
-                        fill:true, tension:0.4, pointRadius:3,
-                        pointBackgroundColor:'#58a6ff' }}]
-        }},
+        data: {{ labels, datasets: [{{ data: pvData, borderColor:'#58a6ff',
+          backgroundColor:'rgba(88,166,255,0.15)', fill:true, tension:0.4,
+          pointRadius:3, pointBackgroundColor:'#58a6ff' }}] }},
         options: {{
           responsive: true, maintainAspectRatio: false,
           plugins: {{ legend: {{ display: false }},
@@ -230,13 +254,12 @@ def _render_charts(today: dict) -> str:
         }}
       }});
     }})();
-    </script>
-    """
+    </script>"""
 
 
 def _render_decisions(decisions: list[dict]) -> str:
     if not decisions:
-        return "<p style='color:#8b949e;padding:16px'>Sin decisiones generadas para hoy.</p>"
+        return "<p style='color:#8b949e;padding:16px'>Sin decisiones generadas.</p>"
 
     cards = ""
     for d in decisions:
@@ -262,53 +285,49 @@ def _render_decisions(decisions: list[dict]) -> str:
 
 
 def _render_outlook(outlook: dict) -> str:
-    days = outlook.get("days", [])
+    days    = outlook.get("days", [])
     summary = outlook.get("summary_text", "")
 
-    months = ["ene","feb","mar","abr","may","jun",
-              "jul","ago","sep","oct","nov","dic"]
+    months    = ["ene","feb","mar","abr","may","jun",
+                 "jul","ago","sep","oct","nov","dic"]
     day_names = ["Lun","Mar","Mié","Jue","Vie","Sáb","Dom"]
 
     day_cards = ""
     for d in days:
-        dt    = datetime.strptime(d["date"], "%Y-%m-%d")
-        label = f"{day_names[dt.weekday()]} {dt.day} {months[dt.month-1]}"
-        rel_w = max(10, min(100, int((1 - d["rain_prob"]) * 100)))
-        pv_w  = max(5,  min(100, int(d["pv_peak_kw"] / 15 * 100)))
-        rel_c = _reliability_color(d["reliability"])
+        dt      = datetime.strptime(d["date"], "%Y-%m-%d")
+        label   = f"{day_names[dt.weekday()]} {dt.day} {months[dt.month-1]}"
+        pv_w    = max(5, min(100, int(d["pv_peak_kw"] / 15 * 100)))
+        rel_c   = _reliability_color(d["reliability"])
+        wx      = _wx_icon(d.get("weather_id"))          # ← weather_id real de DB
 
         day_cards += f"""
         <div class="outlook-day">
           <div class="outlook-label">{label}</div>
-          <div class="outlook-icon">{_wx_icon(None)}</div>
+          <div class="outlook-icon">{wx}</div>
           <div class="outlook-pv" style="color:#58a6ff">FV ~{d['pv_peak_kw']} kW</div>
           <div class="outlook-temp">{d['temp_min']:.0f}°–{d['temp_max']:.0f}°C
             · {d['clouds_pct']:.0f}% nub.</div>
           <div class="mini-bar-wrap">
-            <div class="mini-bar" style="width:{pv_w}%;background:#58a6ff" title="FV relativa"></div>
+            <div class="mini-bar" style="width:{pv_w}%;background:#58a6ff"></div>
           </div>
           
         </div>"""
 
-    warning = """
-    <div class="outlook-warning">
-      ⚠ Datos climatológicos estimados — sin PVP corporativo. Margen de confianza adaptativo según horizonte temporal. Actualización cada mañana.
-    </div>"""
-
     return f"""
     <div class="section">
-      <div class="section-title">Outlook 5 días · Orientativo</div>
+      <div class="section-title">Outlook 5 días · Orientativo (hora local)</div>
       <div class="outlook-summary">{summary}</div>
       <div class="outlook-grid">{day_cards}</div>
-      {warning}
+      <div class="outlook-warning">
+        ⚠ Previsión climática orientativa — Sujeto a variabilidad atmosférica.
+      </div>
     </div>"""
 
 
 def _render_footer(client_id: str, generated_at: str) -> str:
     return f"""
     <div class="footer">
-      <span>Sistema de gestión energética · ETL SunSaver · gold.fact_energy_forecast
-            · {client_id}</span>
+      <span>Sistema de gestión energética · ETL nocturno · gold.fact_energy_forecast · {client_id}</span>
       <span class="footer-logo">ENERGY·OS v2.1</span>
     </div>"""
 
@@ -316,140 +335,87 @@ def _render_footer(client_id: str, generated_at: str) -> str:
 # ── CSS ───────────────────────────────────────────────────────────────────────
 
 CSS = """
-* { box-sizing: border-box; margin: 0; padding: 0; }
-body {
-  background: #0d1117; color: #e6edf3;
-  font-family: 'IBM Plex Sans', 'Segoe UI', sans-serif;
-  font-size: 14px; line-height: 1.5;
-}
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;600;700&display=swap');
-
-/* HEADER */
-.header {
-  background: #161b22; border-bottom: 1px solid rgba(255,255,255,0.1);
-  padding: 20px 28px 16px;
-  display: flex; justify-content: space-between; align-items: flex-start;
-  flex-wrap: wrap; gap: 12px;
-}
-.badge {
-  display: inline-flex; align-items: center; gap: 6px;
-  background: rgba(63,185,80,0.15); border: 1px solid #3fb950;
-  color: #3fb950; font-size: 10px; font-weight: 700; letter-spacing: 1.5px;
-  padding: 3px 10px; border-radius: 3px; margin-bottom: 8px;
-}
-.dot {
-  width: 6px; height: 6px; border-radius: 50%; background: #3fb950;
-  animation: pulse 2s infinite;
-}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background:#0d1117; color:#e6edf3;
+       font-family:'IBM Plex Sans','Segoe UI',sans-serif; font-size:14px; line-height:1.5; }
+.header { background:#161b22; border-bottom:1px solid rgba(255,255,255,0.1);
+          padding:20px 28px 16px; display:flex; justify-content:space-between;
+          align-items:flex-start; flex-wrap:wrap; gap:12px; }
+.badge  { display:inline-flex; align-items:center; gap:6px;
+          background:rgba(63,185,80,0.15); border:1px solid #3fb950;
+          color:#3fb950; font-size:10px; font-weight:700; letter-spacing:1.5px;
+          padding:3px 10px; border-radius:3px; margin-bottom:8px; }
+.dot    { width:6px; height:6px; border-radius:50%; background:#3fb950;
+          animation:pulse 2s infinite; }
 @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
-h1 { font-size: 22px; font-weight: 700; }
-.subtitle { font-size: 13px; color: #8b949e; margin-top: 4px; }
-.header-right { text-align: right; }
-.client-id { font-size: 13px; font-weight: 700; color: #58a6ff;
-             font-family: 'IBM Plex Mono', monospace; }
-.report-date { font-size: 12px; color: #8b949e; margin-top: 2px;
-               font-family: 'IBM Plex Mono', monospace; }
-.generated { font-size: 10px; color: #8b949e; margin-top: 4px; }
-.reliability { font-size: 11px; margin-top: 6px; }
-
-/* KPIs */
-.kpi-strip {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(140px,1fr));
-  gap: 1px; background: rgba(255,255,255,0.08);
-  border-bottom: 1px solid rgba(255,255,255,0.08);
-}
-.kpi-card { background: #161b22; padding: 14px 16px; }
-.kpi-label { font-size: 10px; color: #8b949e; text-transform: uppercase;
-             letter-spacing: 1px; font-weight: 600; }
-.kpi-value { font-size: 18px; font-weight: 700;
-             font-family: 'IBM Plex Mono', monospace; margin-top: 4px; }
-.kpi-sub { font-size: 11px; color: #8b949e; margin-top: 2px; }
-
-/* SECTIONS */
-.section { padding: 20px 28px; border-bottom: 1px solid rgba(255,255,255,0.08); }
-.section-title {
-  font-size: 10px; font-weight: 700; letter-spacing: 1.5px;
-  text-transform: uppercase; color: #8b949e; margin-bottom: 16px;
-  display: flex; align-items: center; gap: 8px;
-}
-.section-title::after {
-  content:''; flex:1; height:1px; background: rgba(255,255,255,0.08);
-}
-
-/* CHARTS */
-.chart-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-.chart-box {
-  background: #161b22; border: 1px solid rgba(255,255,255,0.08);
-  border-radius: 6px; padding: 16px;
-}
-.chart-label { font-size: 11px; font-weight: 600; color: #8b949e; margin-bottom: 12px; }
-
-/* DECISIONS */
-.decisions-grid { display: flex; flex-direction: column; gap: 10px; }
-.decision-card {
-  background: #161b22; border: 1px solid rgba(255,255,255,0.08);
-  border-radius: 6px; padding: 14px 16px;
-  display: grid; grid-template-columns: 48px 1fr auto;
-  align-items: start; gap: 14px;
-}
-.decision-icon {
-  width: 44px; height: 44px; border-radius: 8px;
-  display: flex; align-items: center; justify-content: center;
-}
-.decision-meta { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
-.decision-time {
-  font-family: 'IBM Plex Mono', monospace; font-size: 12px;
-  font-weight: 700; color: #58a6ff;
-}
-.decision-tag {
-  font-size: 9px; font-weight: 700; letter-spacing: 1px;
-  padding: 2px 8px; border-radius: 3px; text-transform: uppercase;
-}
-.decision-title { font-size: 13px; font-weight: 700; margin-bottom: 5px; }
-.decision-reason { font-size: 12px; color: #8b949e; line-height: 1.55; }
-.decision-saving {
-  font-size: 11px; font-weight: 700; text-align: right; white-space: nowrap;
-  font-family: 'IBM Plex Mono', monospace;
-}
-
-/* OUTLOOK */
-.outlook-summary {
-  font-size: 12px; color: #8b949e; line-height: 1.6;
-  background: #161b22; border: 1px solid rgba(255,255,255,0.08);
-  border-radius: 6px; padding: 12px 16px; margin-bottom: 14px;
-}
-.outlook-grid { display: grid; grid-template-columns: repeat(5,1fr); gap: 8px; }
-.outlook-day {
-  background: #161b22; border: 1px solid rgba(255,255,255,0.08);
-  border-radius: 6px; padding: 12px 10px; text-align: center;
-}
-.outlook-label { font-size: 10px; color: #8b949e; text-transform: uppercase; }
-.outlook-icon  { font-size: 22px; margin: 6px 0; }
-.outlook-pv    { font-size: 11px; font-weight: 600; }
-.outlook-temp  { font-size: 10px; color: #8b949e; margin-top: 4px; }
-.mini-bar-wrap {
-  height: 3px; background: rgba(255,255,255,0.08);
-  border-radius: 2px; margin: 8px 0 4px; overflow: hidden;
-}
-.mini-bar { height: 100%; border-radius: 2px; }
-.reliability-label { font-size: 9px; font-weight: 600; text-transform: uppercase; }
-.outlook-warning {
-  margin-top: 12px; font-size: 11px; color: #8b949e; line-height: 1.6;
-  background: #161b22; border: 1px solid rgba(255,255,255,0.08);
-  border-radius: 6px; padding: 10px 14px;
-}
-
-/* FOOTER */
-.footer {
-  padding: 12px 28px; background: #161b22;
-  border-top: 1px solid rgba(255,255,255,0.08);
-  display: flex; justify-content: space-between; align-items: center;
-  font-size: 10px; color: #8b949e; flex-wrap: wrap; gap: 8px;
-}
-.footer-logo {
-  font-family: 'IBM Plex Mono', monospace; font-size: 11px;
-  font-weight: 700; color: #58a6ff; letter-spacing: 1px;
-}
+h1 { font-size:22px; font-weight:700; }
+.subtitle  { font-size:13px; color:#8b949e; margin-top:4px; }
+.header-right { text-align:right; }
+.client-id   { font-size:13px; font-weight:700; color:#58a6ff;
+               font-family:'IBM Plex Mono',monospace; }
+.report-date { font-size:12px; color:#8b949e; margin-top:2px;
+               font-family:'IBM Plex Mono',monospace; }
+.generated   { font-size:10px; color:#8b949e; margin-top:4px; }
+.reliability { font-size:11px; margin-top:6px; }
+.kpi-strip   { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr));
+               gap:1px; background:rgba(255,255,255,0.08);
+               border-bottom:1px solid rgba(255,255,255,0.08); }
+.kpi-card  { background:#161b22; padding:14px 16px; }
+.kpi-label { font-size:10px; color:#8b949e; text-transform:uppercase;
+             letter-spacing:1px; font-weight:600; }
+.kpi-value { font-size:18px; font-weight:700;
+             font-family:'IBM Plex Mono',monospace; margin-top:4px; }
+.kpi-sub   { font-size:11px; color:#8b949e; margin-top:2px; }
+.section   { padding:20px 28px; border-bottom:1px solid rgba(255,255,255,0.08); }
+.section-title { font-size:10px; font-weight:700; letter-spacing:1.5px;
+                 text-transform:uppercase; color:#8b949e; margin-bottom:16px;
+                 display:flex; align-items:center; gap:8px; }
+.section-title::after { content:''; flex:1; height:1px;
+                        background:rgba(255,255,255,0.08); }
+.chart-row { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+.chart-box { background:#161b22; border:1px solid rgba(255,255,255,0.08);
+             border-radius:6px; padding:16px; }
+.chart-label { font-size:11px; font-weight:600; color:#8b949e; margin-bottom:12px; }
+.decisions-grid { display:flex; flex-direction:column; gap:10px; }
+.decision-card  { background:#161b22; border:1px solid rgba(255,255,255,0.08);
+                  border-radius:6px; padding:14px 16px;
+                  display:grid; grid-template-columns:48px 1fr auto;
+                  align-items:start; gap:14px; }
+.decision-icon  { width:44px; height:44px; border-radius:8px;
+                  display:flex; align-items:center; justify-content:center; }
+.decision-meta  { display:flex; align-items:center; gap:10px; margin-bottom:4px; }
+.decision-time  { font-family:'IBM Plex Mono',monospace; font-size:12px;
+                  font-weight:700; color:#58a6ff; }
+.decision-tag   { font-size:9px; font-weight:700; letter-spacing:1px;
+                  padding:2px 8px; border-radius:3px; text-transform:uppercase; }
+.decision-title  { font-size:13px; font-weight:700; margin-bottom:5px; }
+.decision-reason { font-size:12px; color:#8b949e; line-height:1.55; }
+.decision-saving { font-size:11px; font-weight:700; text-align:right;
+                   white-space:nowrap; font-family:'IBM Plex Mono',monospace; }
+.outlook-summary { font-size:12px; color:#8b949e; line-height:1.6;
+                   background:#161b22; border:1px solid rgba(255,255,255,0.08);
+                   border-radius:6px; padding:12px 16px; margin-bottom:14px; }
+.outlook-grid  { display:grid; grid-template-columns:repeat(5,1fr); gap:8px; }
+.outlook-day   { background:#161b22; border:1px solid rgba(255,255,255,0.08);
+                 border-radius:6px; padding:12px 10px; text-align:center; }
+.outlook-label { font-size:10px; color:#8b949e; text-transform:uppercase; }
+.outlook-icon  { font-size:22px; margin:6px 0; }
+.outlook-pv    { font-size:11px; font-weight:600; }
+.outlook-temp  { font-size:10px; color:#8b949e; margin-top:4px; }
+.mini-bar-wrap { height:3px; background:rgba(255,255,255,0.08);
+                 border-radius:2px; margin:8px 0 4px; overflow:hidden; }
+.mini-bar      { height:100%; border-radius:2px; }
+.reliability-label { font-size:9px; font-weight:600; text-transform:uppercase; }
+.outlook-warning   { margin-top:12px; font-size:11px; color:#8b949e; line-height:1.6;
+                     background:#161b22; border:1px solid rgba(255,255,255,0.08);
+                     border-radius:6px; padding:10px 14px; }
+.footer      { padding:12px 28px; background:#161b22;
+               border-top:1px solid rgba(255,255,255,0.08);
+               display:flex; justify-content:space-between; align-items:center;
+               font-size:10px; color:#8b949e; flex-wrap:wrap; gap:8px; }
+.footer-logo { font-family:'IBM Plex Mono',monospace; font-size:11px;
+               font-weight:700; color:#58a6ff; letter-spacing:1px; }
 """
 
 
@@ -463,7 +429,8 @@ def render_html(data: dict) -> str:
     body = (
         _render_header(data)
         + _render_kpis(today["kpis"])
-        + '<div class="section"><div class="section-title">Decisiones operativas · Plan de acción hoy</div>'
+        + '<div class="section"><div class="section-title">'
+          'Decisiones operativas · Plan de acción · Hora local</div>'
         + _render_decisions(today["decisions"])
         + "</div>"
         + _render_charts(today)
@@ -508,7 +475,7 @@ def save_pdf(html_path: Path) -> Path | None:
         from playwright.sync_api import sync_playwright
     except ImportError:
         logger.warning("[PDF] Playwright no instalado — omitiendo PDF. "
-                       "Instalar con: pip install playwright && playwright install chromium")
+                       "Instalar: pip install playwright && playwright install chromium")
         return None
 
     pdf_path = html_path.with_suffix(".pdf")
@@ -561,9 +528,9 @@ def generate_report(client_id: str, export_pdf: bool = False) -> dict[str, Path 
 
 if __name__ == "__main__":
     import sys
-    client  = sys.argv[1] if len(sys.argv) > 1 else "CLT-0001"
-    pdf     = "--pdf" in sys.argv
-    result  = generate_report(client, export_pdf=pdf)
+    client = sys.argv[1] if len(sys.argv) > 1 else "CLT-0001"
+    pdf    = "--pdf" in sys.argv
+    result = generate_report(client, export_pdf=pdf)
     print(f"\n✓ HTML → {result['html']}")
     if result["pdf"]:
         print(f"✓ PDF  → {result['pdf']}")
