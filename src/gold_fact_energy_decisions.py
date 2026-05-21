@@ -189,7 +189,7 @@ def _build_decisions(df_today: pd.DataFrame, df_assets: pd.DataFrame) -> list[di
                 "reason":      (
                     f"PVP en mínimos ({pvp_min:.0f} €/MWh). "
                     f"Cargar al 100% entre {window_str} antes del turno. "
-                    f"Evitar carga en horas pico ({_fmt_list(high_hours[:3])}, "
+                    f"Evitar carga en horas pico ({_fmt_list(high_hours)}, "
                     f">{PVP_HIGH_EUR_MWH:.0f} €/MWh)."
                 ),
                 "saving_tag":  "Ahorro en carga",
@@ -212,7 +212,7 @@ def _build_decisions(df_today: pd.DataFrame, df_assets: pd.DataFrame) -> list[di
                     f"Bajar consigna durante {window_str} aprovechando "
                     f"{'FV activa' if solar_in_window else 'PVP bajo'}. "
                     f"La inercia térmica reduce arranques en horas pico "
-                    f"({_fmt_list(high_hours[:3])}, >{PVP_HIGH_EUR_MWH:.0f} €/MWh)."
+                    f"({_fmt_list(high_hours)}, >{PVP_HIGH_EUR_MWH:.0f} €/MWh)."
                 ),
                 "saving_tag":  "Diferir compresor",
                 "urgency":     "high",
@@ -232,7 +232,7 @@ def _build_decisions(df_today: pd.DataFrame, df_assets: pd.DataFrame) -> list[di
                 "reason":      (
                     f"Arrancar compresor y hacer purga/filtros durante {window_str} "
                     f"(PVP ~{pvp_min:.0f}–{PVP_LOW_EUR_MWH:.0f} €/MWh). "
-                    f"Evitar arranque en pico ({_fmt_list(high_hours[:2])})."
+                    f"Evitar arranque en pico ({_fmt_list(high_hours)})."
                 ),
                 "saving_tag":  "Ventana mantenimiento",
                 "urgency":     "medium",
@@ -252,7 +252,7 @@ def _build_decisions(df_today: pd.DataFrame, df_assets: pd.DataFrame) -> list[di
                 "action":      "Llenar depósito de proceso en horario solar/barato",
                 "reason":      (
                     f"Operar bombas durante {window_str} para llenar depósito. "
-                    f"Evitar arranques en horas caras ({_fmt_list(high_hours[:2])})."
+                    f"Evitar arranques en horas caras ({_fmt_list(high_hours)})."
                 ),
                 "saving_tag":  "Desplazar carga",
                 "urgency":     "medium",
@@ -274,7 +274,7 @@ def _build_decisions(df_today: pd.DataFrame, df_assets: pd.DataFrame) -> list[di
                     f"Programar ciclos de esterilización/pasteurización durante "
                     f"{window_str}. FV pico {pv_peak_kw:.1f} kW a las {pv_peak_h:02d}h "
                     f"cubre parte del consumo. "
-                    f"No arrancar en horas pico ({_fmt_list(high_hours[:2])})."
+                    f"No arrancar en horas pico ({_fmt_list(high_hours)})."
                 ),
                 "saving_tag":  "FV activa",
                 "urgency":     "high",
@@ -291,7 +291,7 @@ def _build_decisions(df_today: pd.DataFrame, df_assets: pd.DataFrame) -> list[di
                 "action":      "Apagar iluminación no esencial en horas pico",
                 "reason":      (
                     f"Reducir iluminación de zonas no productivas durante horas pico "
-                    f"({_fmt_list(high_hours[:4])}, >{PVP_HIGH_EUR_MWH:.0f} €/MWh). "
+                    f"({_fmt_list(high_hours)}, >{PVP_HIGH_EUR_MWH:.0f} €/MWh). "
                     f"PVP máx. del día: {pvp_max:.0f} €/MWh."
                 ),
                 "saving_tag":  "Reducción carga",
@@ -309,7 +309,7 @@ def _build_decisions(df_today: pd.DataFrame, df_assets: pd.DataFrame) -> list[di
                 "action":      "Monitorizar consumo — activo no flexible",
                 "reason":      (
                     f"Este activo no es desplazable. "
-                    f"Vigilar consumo en horas pico ({_fmt_list(high_hours[:3])}). "
+                    f"Vigilar consumo en horas pico ({_fmt_list(high_hours)}). "
                     f"Asegurar que no arrancan otros equipos simultáneamente."
                 ),
                 "saving_tag":  "Alerta pico",
@@ -396,8 +396,8 @@ def _build_kpis(df_today: pd.DataFrame) -> dict:
         "pvp_avg":            round(float(pvp_s["price_pvpc_eur_mwh"].mean()), 2) if has_pvp else None,
         "avg_consumption_kw": round(float(df_today["power_consumption_kw"].mean()), 1),
         "hours_solar":        int((df_today["pv_power_gen_kw"] >= PV_ACTIVE_KW).sum()),
-        "hours_cheap":        int((df_today["pvp_class"] == "low").sum()),
-        "hours_expensive":    int((df_today["pvp_class"] == "high").sum()),
+        "hours_cheap":        int((df_today["price_pvpc_eur_mwh"] < PVP_LOW_EUR_MWH).sum()),
+        "hours_expensive":    int((df_today["price_pvpc_eur_mwh"] > PVP_HIGH_EUR_MWH).sum()),
         "has_pvp":            bool(has_pvp),
         "forecast_reliability": "alta" if has_pvp else "baja",
     }
@@ -416,7 +416,7 @@ def _fmt_list(hours: list[int]) -> str:
     """[19,20,21] → '19h, 20h, 21h'  (hora local)"""
     if not hours:
         return "—"
-    return ", ".join(f"{h:02d}h" for h in sorted(hours)[:4])
+    return ", ".join(f"{h:02d}h" for h in sorted(hours))
 
 
 # ── ORCHESTRATOR ──────────────────────────────────────────────────────────────

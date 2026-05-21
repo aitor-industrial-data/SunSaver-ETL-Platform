@@ -58,7 +58,7 @@ def transform_context_bronze_to_silver(df_raw: pd.DataFrame) -> pd.DataFrame:
         "demand_real": {"min": 5000.0,   "max": 600000.0},   # MW
         "pv_gen":      {"min": 0.0,      "max": 500000.0},   # MW
         "co2":         {"min": 0.0,      "max": 100000.0},   # tCO2/h
-        "upward_imb":  {"min": -50000.0, "max": 50000.0},    # Admite desvíos negativos
+        "upward_imb":  {"min": -50000000.0, "max": 5000000.0},    # Admite desvíos negativos
     }
 
     DEFAULT_RANGE = {"min": -100000.0, "max": 1000000.0}

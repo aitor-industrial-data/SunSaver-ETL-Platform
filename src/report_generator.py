@@ -65,19 +65,19 @@ WX_ICON = {
     200: "⛈️", 201: "⛈️", 202: "⛈️", 210: "⛈️", 211: "⛈️",
     212: "⛈️", 221: "⛈️", 230: "⛈️", 231: "⛈️", 232: "⛈️",
     # Llovizna (3xx)
-    300: "🌦", 301: "🌦", 302: "🌦", 310: "🌦", 311: "🌦",
-    312: "🌦", 313: "🌦", 314: "🌦", 321: "🌦",
+    300: "🌦️", 301: "🌦️", 302: "🌦", 310: "🌦️", 311: "🌦",
+    312: "🌦", 313: "🌦️", 314: "🌦", 321: "🌦️",
     # Lluvia (5xx)
-    500: "🌧", 501: "🌧", 502: "🌧", 503: "🌧", 504: "🌧",
-    511: "🌨", 520: "🌧", 521: "🌧", 522: "🌧", 531: "🌧",
+    500: "🌦️", 501: "🌨", 502: "🌨", 503: "🌨", 504: "🌨",
+    511: "🌨", 520: "🌦️", 521: "🌧", 522: "🌧", 531: "🌧",
     # Nieve (6xx)
-    600: "🌨", 601: "🌨", 602: "🌨", 611: "🌨", 612: "🌨",
-    613: "🌨", 615: "🌨", 616: "🌨", 620: "🌨", 621: "🌨", 622: "🌨",
+    600: "❄️", 601: "❄️", 602: "❄️", 611: "❄️", 612: "❄️",
+    613: "❄️", 615: "❄️", 616: "❄️", 620: "❄️", 621: "❄️", 622: "❄️",
     # Atmósfera (7xx)
     701: "🌫", 711: "🌫", 721: "🌫", 731: "🌫", 741: "🌫",
     751: "🌫", 761: "🌫", 762: "🌫", 771: "🌫", 781: "🌪",
     # Despejado / nubes (8xx)
-    800: "☀️", 801: "🌤", 802: "⛅", 803: "🌥", 804: "☁️",
+    800: "☀️", 801: "🌤️", 802: "⛅", 803: "☁️", 804: "☁️",
 }
 
 
@@ -298,7 +298,7 @@ def _render_outlook(outlook: dict) -> str:
         label   = f"{day_names[dt.weekday()]} {dt.day} {months[dt.month-1]}"
         pv_w    = max(5, min(100, int(d["pv_peak_kw"] / 15 * 100)))
         rel_c   = _reliability_color(d["reliability"])
-        wx      = _wx_icon(d.get("weather_id"))          # ← weather_id real de DB
+        wx      = _wx_icon(d.get("weather_id"))       
 
         day_cards += f"""
         <div class="outlook-day">
@@ -466,71 +466,31 @@ def save_html(html: str, client_id: str, report_date: str) -> Path:
     return out
 
 
-def save_pdf(html_path: Path) -> Path | None:
-    """
-    Convierte el HTML a PDF usando Playwright (headless Chromium).
-    Requiere:  pip install playwright && playwright install chromium
-    """
-    try:
-        from playwright.sync_api import sync_playwright
-    except ImportError:
-        logger.warning("[PDF] Playwright no instalado — omitiendo PDF. "
-                       "Instalar: pip install playwright && playwright install chromium")
-        return None
-
-    pdf_path = html_path.with_suffix(".pdf")
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch()
-            page    = browser.new_page()
-            page.goto(html_path.resolve().as_uri(), wait_until="networkidle")
-            page.pdf(
-                path=str(pdf_path),
-                format="A4",
-                landscape=True,
-                print_background=True,
-                margin={"top": "10mm", "bottom": "10mm",
-                        "left": "10mm", "right": "10mm"},
-            )
-            browser.close()
-        logger.info("[PDF] PDF guardado: %s", pdf_path)
-        return pdf_path
-    except Exception as exc:
-        logger.error("[PDF] Error generando PDF: %s", exc)
-        return None
-
-
 # ── ENTRY POINT ───────────────────────────────────────────────────────────────
 
-def generate_report(client_id: str, export_pdf: bool = False) -> dict[str, Path | None]:
+def generate_report(client_id: str) -> dict[str, Path | None]:
     """
     Entry point del módulo.
-    Devuelve dict con paths: {"html": Path, "pdf": Path | None}
+    Devuelve dict con paths: {"html": Path}
     """
     logger.info("[INIT] ── generate_report — cliente: %s ──────────────────", client_id)
 
     data = build_energy_decisions(client_id)
     if not data:
         logger.error("[ERROR] Sin datos de decisiones — abortando")
-        return {"html": None, "pdf": None}
+        return {"html": None}
 
     report_date = data["today"]["date"]
     html        = render_html(data)
     html_path   = save_html(html, client_id, report_date)
 
-    pdf_path = save_pdf(html_path) if export_pdf else None
+    logger.info("[DONE] generate_report — fecha: %s", report_date)
 
-    logger.info("[DONE] generate_report — fecha: %s | PDF: %s",
-                report_date, "sí" if pdf_path else "no")
-
-    return {"html": html_path, "pdf": pdf_path}
+    return {"html": html_path}
 
 
 if __name__ == "__main__":
     import sys
     client = sys.argv[1] if len(sys.argv) > 1 else "CLT-0001"
-    pdf    = "--pdf" in sys.argv
-    result = generate_report(client, export_pdf=pdf)
+    result = generate_report(client)
     print(f"\n✓ HTML → {result['html']}")
-    if result["pdf"]:
-        print(f"✓ PDF  → {result['pdf']}")
