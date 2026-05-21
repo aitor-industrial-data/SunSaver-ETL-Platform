@@ -133,7 +133,7 @@ def _render_header(data: dict) -> str:
       <div class="header-left">
         <div class="badge"><span class="dot"></span>INFORME ACTIVO</div>
         <h1>Estrategia Energética · Plan de Acción</h1>
-        <p class="subtitle">{client['name']} &nbsp;·&nbsp; Turno completo · Hora local</p>
+        <p class="subtitle">{client['name']} &nbsp;·&nbsp; Turno completo</p>
       </div>
       <div class="header-right">
         <div class="client-id">{client['client_id']}</div>
@@ -315,7 +315,7 @@ def _render_outlook(outlook: dict) -> str:
 
     return f"""
     <div class="section">
-      <div class="section-title">Outlook 5 días · Orientativo (hora local)</div>
+      <div class="section-title">Outlook 5 días · Orientativo</div>
       <div class="outlook-summary">{summary}</div>
       <div class="outlook-grid">{day_cards}</div>
       <div class="outlook-warning">
@@ -430,7 +430,7 @@ def render_html(data: dict) -> str:
         _render_header(data)
         + _render_kpis(today["kpis"])
         + '<div class="section"><div class="section-title">'
-          'Decisiones operativas · Plan de acción · Hora local</div>'
+          'Decisiones operativas · Plan de acción</div>'
         + _render_decisions(today["decisions"])
         + "</div>"
         + _render_charts(today)
