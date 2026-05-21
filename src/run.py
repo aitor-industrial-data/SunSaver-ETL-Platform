@@ -193,3 +193,15 @@ if __name__ == "__main__":
     args = parse_args()
     success = run_pipeline(from_stage=args.stage, dry_run=args.dry_run)
     sys.exit(0 if success else 1)
+
+
+
+# Ejecucion manual en AWS:
+"""
+aws ecs run-task \
+  --cluster sunsaver-cluster \
+  --task-definition sunsaver-etl-task \
+  --launch-type FARGATE \
+  --network-configuration "awsvpcConfiguration={subnets=[subnet-05a527b7089d50fbe],securityGroups=[sg-0af186c633b6cc3fe],assignPublicIp=ENABLED}" \
+  --region eu-south-2
+"""
