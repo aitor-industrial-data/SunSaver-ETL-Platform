@@ -14,9 +14,11 @@ from typing import Callable, Tuple
 from logger_config import setup_logging
 from audit_metadata import save_etl_metadata
 import bronze_ingest_clients
+import bronze_ingest_assets
 import bronze_ingest_prices_ree
 import bronze_ingest_context
 import silver_transform_clients
+import silver_transform_assets
 import silver_transform_prices
 import silver_transform_context
 import bronze_ingest_weather_owm
@@ -41,9 +43,11 @@ logger = setup_logging()
 # ─────────────────────────────────────────────────────────────────────────────
 PIPELINE: list[tuple[int, str, Callable]] = [
     (1, "extract_clients",             bronze_ingest_clients.extract_clients),
+    (1, "extract_assets",              bronze_ingest_assets.extract_assets),
     (1, "extract_energy_prices",       bronze_ingest_prices_ree.extract_energy_prices),
     (1, "extract_system_context",      bronze_ingest_context.extract_system_context),
     (2, "transform_clients",           silver_transform_clients.transform_clients),
+    (2, "transform_assets",            silver_transform_assets.transform_assets),
     (2, "transform_energy_prices",     silver_transform_prices.transform_energy_prices),
     (2, "transform_context",           silver_transform_context.transform_energy_context),
     (3, "extract_openweather",         bronze_ingest_weather_owm.extract_openweather),
