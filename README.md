@@ -10,7 +10,7 @@
 [![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](https://python.org)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-RDS-336791?logo=postgresql&logoColor=white)](https://aws.amazon.com/rds/)
 [![Deploy](https://img.shields.io/badge/Deploy-GitHub_Actions_→_ECR_→_ECS-2088FF?logo=githubactions&logoColor=white)](https://github.com/aitor-industrial-data/SunSaver-ETL-Platform/actions)
-[![Informe live](https://img.shields.io/badge/Informe_live-Ver_ahora_→-F5A623)](https://sunsaver-bronze.s3.eu-south-2.amazonaws.com/reports/latest.html)
+[![Informe live](https://img.shields.io/badge/Informe_live-Ver_ahora_→-A2E865)](https://sunsaver-bronze.s3.eu-south-2.amazonaws.com/reports/latest.html)
 
 ---
 
@@ -24,7 +24,7 @@ Una instalación fotovoltaica industrial genera datos que por sí solos no sirve
 20:30 h  →  ESIOS publica precios PVPC D+1
 21:00 h  →  SunSaver ejecuta pipeline completo  (~3 min en Fargate)
 21:05 h  →  Informe HTML publicado en URL fija de S3
-07:00 h  →  El jefe de planta abre el informe antes del primer turno
+06:00 h  →  El jefe de planta abre el informe antes del primer turno
 ```
 
 ---
