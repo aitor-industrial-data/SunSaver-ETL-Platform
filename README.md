@@ -16,12 +16,12 @@
 
 ## 🚀 Ver el informe en vivo
 
-El resultado tangible del pipeline: un **informe operativo diario** con decisiones concretas para la planta.
+El resultado tangible del pipeline: un **plan de accción diario** con decisiones concretas para la planta.
 
 <div>
 
 <a href="https://sunsaver-bronze.s3.eu-south-2.amazonaws.com/reports/latest.html">
-  <img src="https://img.shields.io/badge/🔗_VER_INFORME_LIVE_AHORA_→-A2E865?style=for-the-badge&logo=googleanalytics&logoColor=white&labelColor=1a1a1a" alt="Ver informe live" height="48">
+  <img src="https://img.shields.io/badge/🔗_Ver estrategia energética de hoy_→-A2E865?style=for-the-badge" alt="Ver informe live" height="48">
 </a>
 
 *Actualizado cada noche tras la ejecución del pipeline (~21:05 h)*
