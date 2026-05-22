@@ -10,11 +10,10 @@
 [![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](https://python.org)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-RDS-336791?logo=postgresql&logoColor=white)](https://aws.amazon.com/rds/)
 [![Deploy](https://img.shields.io/badge/Deploy-GitHub_Actions_→_ECR_→_ECS-2088FF?logo=githubactions&logoColor=white)](https://github.com/aitor-industrial-data/SunSaver-ETL-Platform/actions)
-[![Informe live](https://img.shields.io/badge/Informe_live-Ver_ahora_→-A2E865)](https://sunsaver-bronze.s3.eu-south-2.amazonaws.com/reports/latest.html)
 
 ---
 
-## 🚀 Ver el informe en vivo
+## Ver el informe en vivo
 
 El resultado tangible del pipeline: un **plan de accción diario** con decisiones concretas para la planta.
 
