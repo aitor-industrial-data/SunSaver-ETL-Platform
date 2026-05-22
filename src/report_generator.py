@@ -330,7 +330,7 @@ def _render_outlook(outlook: dict) -> str:
 def _render_footer(client_id: str, generated_at: str) -> str:
     return f"""
     <div class="footer">
-      <span>Sistema de gestión energética · ETL nocturno · gold.fact_energy_forecast · {client_id}</span>
+      <span>Sistema de gestión energética · ETL SunSaver · gold.fact_energy_forecast · {client_id}</span>
       <span class="footer-logo">ENERGY·OS v2.1</span>
     </div>"""
 

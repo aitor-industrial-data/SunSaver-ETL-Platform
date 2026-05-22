@@ -14,6 +14,22 @@
 
 ---
 
+## 🚀 Ver el informe en vivo
+
+El resultado tangible del pipeline: un **informe operativo diario** con decisiones concretas para la planta.
+
+<div>
+
+<a href="https://sunsaver-bronze.s3.eu-south-2.amazonaws.com/reports/latest.html">
+  <img src="https://img.shields.io/badge/🔗_VER_INFORME_LIVE_AHORA_→-A2E865?style=for-the-badge&logo=googleanalytics&logoColor=white&labelColor=1a1a1a" alt="Ver informe live" height="48">
+</a>
+
+*Actualizado cada noche tras la ejecución del pipeline (~21:05 h)*
+
+</div>
+
+---
+
 ## El problema que resuelve
 
 Una instalación fotovoltaica industrial genera datos que por sí solos no sirven para tomar decisiones. El precio de la electricidad cambia cada hora, la generación solar depende de la posición exacta del sol y de la temperatura real del panel, y el responsable de planta necesita saber **qué hacer mañana a las 7h**, no leer tablas en crudo.
