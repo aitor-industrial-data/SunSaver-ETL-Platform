@@ -419,8 +419,45 @@ h1 { font-size:22px; font-weight:700; }
                font-size:10px; color:#8b949e; flex-wrap:wrap; gap:8px; }
 .footer-logo { font-family:'IBM Plex Mono',monospace; font-size:11px;
                font-weight:700; color:#58a6ff; letter-spacing:1px; }
-"""
 
+/* === MEDIA QUERIES MOBILE === */
+@media (max-width: 768px) {
+  .header { flex-direction: column; align-items: flex-start; gap: 16px; }
+  .header-right { text-align: left; width: 100%; }
+  .chart-row { grid-template-columns: 1fr; }
+  .decision-card { grid-template-columns: 48px 1fr; grid-template-rows: auto auto; }
+  .decision-saving { grid-column: 1 / -1; text-align: left; margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.08); }
+}
+@media (max-width: 480px) {
+  body { font-size: 13px; }
+  .header { padding: 16px 16px 12px; }
+  .section { padding: 16px; }
+  .footer { padding: 12px 16px; }
+  h1 { font-size: 18px; }
+  .subtitle { font-size: 12px; }
+  .kpi-strip { grid-template-columns: 1fr 1fr; }
+  .kpi-card { padding: 12px; }
+  .kpi-value { font-size: 16px; }
+  .decision-card { grid-template-columns: 1fr; gap: 10px; }
+  .decision-icon { width: 40px; height: 40px; font-size: 18px; }
+  .decision-meta { flex-wrap: wrap; gap: 6px; }
+  .decision-saving { grid-column: 1; text-align: left; }
+  .outlook-grid { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch; gap: 8px; padding-bottom: 8px; scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.1) transparent; }
+  .outlook-grid::-webkit-scrollbar { height: 4px; }
+  .outlook-grid::-webkit-scrollbar-track { background: transparent; }
+  .outlook-grid::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 2px; }
+  .outlook-day { flex: 0 0 140px; scroll-snap-align: start; padding: 14px 12px; }
+  .outlook-icon { font-size: 26px; }
+  .outlook-pv { font-size: 12px; }
+  .outlook-temp { font-size: 11px; }
+}
+@media (max-width: 360px) {
+  .kpi-strip { grid-template-columns: 1fr; }
+  .badge { font-size: 9px; padding: 2px 8px; }
+  .client-id { font-size: 12px; }
+  .outlook-day { flex: 0 0 120px; }
+}
+"""
 
 # ── RENDER COMPLETO ───────────────────────────────────────────────────────────
 
