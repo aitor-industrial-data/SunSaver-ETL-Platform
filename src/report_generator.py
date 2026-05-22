@@ -136,7 +136,7 @@ def _render_header(data: dict) -> str:
       <div class="header-left">
         <div class="badge"><span class="dot"></span>INFORME ACTIVO</div>
         <h1>Estrategia Energética · Plan de Acción</h1>
-        <p class="subtitle">{client['name']} &nbsp;·&nbsp; Turno completo</p>
+        <p class="subtitle">{client['name']} &nbsp;·&nbsp; "Sostenidos por cinta aislante, impulsados por la fe. Mientras salga zumo, nadie toca nada."</p>
       </div>
       <div class="header-right">
         <div class="client-id">{client['client_id']}</div>

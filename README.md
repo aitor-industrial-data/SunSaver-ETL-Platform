@@ -1,238 +1,234 @@
-# ☀️ SunSaver ETL — Plataforma de Inteligencia Fotovoltaica
+# ☀️ SunSaver ETL Platform
 
-> **Transformando datos brutos de generación solar y meteorología en decisiones energéticas respaldadas por datos para instalaciones industriales.**
+> Plataforma de previsión de generación solar y optimización energética para industria.  
+> Pipeline serverless en AWS que convierte datos de mercado eléctrico y meteorología  
+> en un **plan de acción operativo** listo cada mañana antes de que arranque el turno.
 
----
+<br>
 
-## 🏭 El Problema Industrial
-
-Las instalaciones industriales con sistemas fotovoltaicos se enfrentan cada día a un problema crítico y costoso: **operan a ciegas**.
-
-Los paneles están generando energía. La red la está tarifando de forma diferente cada hora. El cielo está cambiando. Pero el responsable de operaciones no dispone de una visión unificada y en tiempo real que conecte todo esto.
-
-El resultado:
-
-- Compresores y hornos funcionan en hora punta cuando la electricidad de red cuesta 3× más
-- Las baterías permanecen inactivas mientras el excedente solar se vierte a la red a precios casi nulos
-- El mantenimiento es reactivo, nunca predictivo
-- El departamento financiero es incapaz de verificar si la instalación solar está entregando el ROI prometido
-
-**SunSaver ETL resuelve esto.** Es un pipeline de datos de calidad productiva que ingesta, transforma y estructura cada variable que determina el coste energético y el rendimiento solar — proporcionando a los operadores industriales la base analítica que necesitan para actuar, no solo para observar.
+[![AWS Fargate](https://img.shields.io/badge/AWS-Fargate-FF9900?logo=amazonaws&logoColor=white)](https://aws.amazon.com/fargate/)
+[![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](https://python.org)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-RDS-336791?logo=postgresql&logoColor=white)](https://aws.amazon.com/rds/)
+[![Deploy](https://img.shields.io/badge/Deploy-GitHub_Actions_→_ECR_→_ECS-2088FF?logo=githubactions&logoColor=white)](https://github.com/aitor-industrial-data/SunSaver-ETL-Platform/actions)
+[![Informe live](https://img.shields.io/badge/Informe_live-Ver_ahora_→-F5A623)](https://sunsaver-bronze.s3.eu-south-2.amazonaws.com/reports/latest.html)
 
 ---
 
-## 🔬 Qué Hace
+## El problema que resuelve
 
-SunSaver es un **pipeline ETL multi-etapa** construido sobre la arquitectura medallón (Bronce → Plata → Oro). Cada 24 horas:
+Una instalación fotovoltaica industrial genera datos que por sí solos no sirven para tomar decisiones. El precio de la electricidad cambia cada hora, la generación solar depende de la posición exacta del sol y de la temperatura real del panel, y el responsable de planta necesita saber **qué hacer mañana a las 7h**, no leer tablas en crudo.
 
-1. **Lee la configuración de las instalaciones** desde un fichero Excel maestro (especificaciones de paneles, coordenadas GPS, coeficientes de pérdidas, configuración de batería)
-2. **Descarga los precios de electricidad del día siguiente** desde la API pública de REE (PVPC + Mercado Spot, hora a hora)
-3. **Obtiene previsiones meteorológicas a 5 días** desde OpenWeatherMap para las coordenadas exactas de cada cliente
-4. **Ejecuta un modelo físico de generación FV** que calcula, para cada ventana de pronóstico de 3 horas:
-   - Irradiancia Global Horizontal (GHI) con el modelo de cielo despejado de Haurwitz + corrección por nubosidad y código meteorológico
-   - Descomposición beam/difusa mediante el **modelo de Erbs**
-   - Irradiancia en el Plano del Array (POA) considerando inclinación del panel, azimut y albedo del suelo
-   - Temperatura de célula con el **modelo de Faiman**
-   - Potencia AC de salida con derating térmico y coeficientes de pérdidas del sistema
-   - Simulación dinámica del consumo industrial (turnos, carga HVAC, ruido estocástico)
-5. **Puebla la capa Gold** con un star schema listo para dashboards BI o modelos ML
-
-Todo esto se ejecuta de forma desatendida, idempotente y con logging estructurado en cada paso.
-
----
-
-## 🏗️ Arquitectura
+**SunSaver cierra ese gap.** Cada noche a las 21h —cuando ESIOS publica los precios PVPC del día siguiente— el pipeline se ejecuta automáticamente y entrega un informe accionable: cuándo cargar las carretillas, cuándo no arrancar compresores, cuándo aprovechar el excedente solar, etc.
 
 ```
-┌────────────────────────────────────────────────────────────────┐
-│                      FUENTES DE DATOS                          │
-│  Excel (clientes)  │  API REE (precios)  │  API OpenWeather    │
-└────────┬───────────┴────────┬────────────┴────────┬────────────┘
-         │                    │                     │
-         ▼                    ▼                     ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    🥉 CAPA BRONCE                               │
-│   raw_clients  │  raw_prices  │  raw_weather                    │
-│   (append-only, trazabilidad completa, _ingested_at_utc)        │
-└────────────────────────────┬────────────────────────────────────┘
-                             │
-                             ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    🥈 CAPA PLATA                                │
-│  clean_clients │ clean_prices │ clean_weather │ clean_calcs     │
-│  (tipado, validado, deduplicado, PK forzada)                    │
-│                        │                                        │
-│          ┌─────────────┘                                        │
-│          ▼                                                      │
-│   ⚡ MOTOR DE GENERACIÓN FV (pvlib + Haurwitz + Erbs + Faiman)   │
-└────────────────────────────┬────────────────────────────────────┘
-                             │
-                             ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    🥇 CAPA ORO (Star Schema)                    │
-│  gold_dim_client  │  gold_dim_datetime  │  gold_dim_weather     │
-│                   gold_fact_energy_forecast                     │
-│  (listo para BI, FK forzadas, indexado)                         │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-### Orden de Ejecución del Pipeline
-
-| Stage | Paso | Entrada → Salida |
-|-------|------|-----------------|
-| 1 | `extract_clients` | Excel → `raw_clients` |
-| 1 | `extract_energy_prices` | API REE → `raw_prices` |
-| 2 | `transform_clients` | `raw_clients` → `clean_clients` |
-| 2 | `transform_energy_prices` | `raw_prices` → `clean_prices` |
-| 3 | `extract_openweather` | API OpenWeather → `raw_weather` |
-| 4 | `transform_openweather` | `raw_weather` → `clean_weather` |
-| 5 | `extract_generation_data` | `clean_clients` + `clean_weather` → `clean_calculations` |
-| 6 | `gold_dim_*` + `gold_fact_energy_forecast` | Plata → Oro |
-
----
-
-## ⚡ El Motor de Física
-
-El diferenciador técnico de SunSaver es que no depende de tablas de consulta de irradiancia simplificadas. Implementa una **cadena de modelos fotovoltaicos validados**:
-
-```
-Posición Solar (pvlib) → GHI (Haurwitz + Corrección por Nubosidad)
-    → DNI + DHI (Descomposición Erbs)
-        → POA (Liu-Jordan + Albedo)
-            → T_célula (Faiman)
-                → P_AC (Derating Térmico + Pérdidas del Sistema)
-```
-
-Cada paso degrada con seguridad: si el sol está por debajo de 2° de elevación, todos los cálculos posteriores cortocircuitan a cero, eliminando la inestabilidad numérica característica de los cálculos cerca del horizonte.
-
-El modelo de consumo simula un perfil de carga industrial real — picos de arranque de turno, valle del mediodía, respuesta HVAC a la temperatura ambiente — produciendo cifras de balance energético neto que los equipos de operaciones pueden utilizar directamente.
-
----
-
-## 🗄️ Esquema Gold (Star Schema)
-
-```sql
-gold_fact_energy_forecast
-    ├── client_id          (FK → gold_dim_client)
-    ├── unix_time          (FK → gold_dim_datetime)
-    ├── weather_id         (FK → gold_dim_weather)
-    ├── pv_power_gen_kw
-    ├── power_consumption_kw
-    ├── poa_wm2
-    ├── t_cell_celsius
-    ├── temp_celsius / humidity_pct / clouds_pct / wind_speed_mps
-    ├── price_pvpc_eur_mwh
-    └── price_spot_eur_mwh
-
-gold_dim_datetime
-    ├── datetime_utc / datetime_local
-    ├── tariff_period      (P1 Punta / P2 Llano / P3 Valle / P6 Super-Valle)
-    ├── is_weekend / is_festivo / is_daylight
-    └── hour_utc / hour_local / day_of_week / month / year
-
-gold_dim_client
-    ├── pv_peak_power_kw / panel_type / efficiency / loss_pct
-    ├── angle / aspect / mounting
-    ├── battery_capacity_kwh / soc_min_pct
-    ├── has_solar / has_battery   (flags booleanos derivados)
-    └── installation_cost_eur
-
-gold_dim_weather
-    ├── weather_id (códigos OpenWeather)
-    ├── weather_main / weather_description
-    └── (resuelto por frecuencia cuando existen múltiples descripciones para el mismo ID)
+20:30 h  →  ESIOS publica precios PVPC D+1
+21:00 h  →  SunSaver ejecuta pipeline completo  (~3 min en Fargate)
+21:05 h  →  Informe HTML publicado en URL fija de S3
+07:00 h  →  El jefe de planta abre el informe antes del primer turno
 ```
 
 ---
 
-## 🛠️ Stack Tecnológico
+## Qué hace el sistema
 
-| Capa | Tecnología |
-|------|------------|
-| Lenguaje | Python 3.11+ |
-| Modelado FV | `pvlib` (estándar de la industria) |
-| Manipulación de datos | `pandas`, `numpy` |
-| Base de datos | SQLite (portable, sin configuración) |
-| ORM/SQL | `sqlalchemy` (UPSERT, DDL) |
-| APIs externas | `requests` (REE, OpenWeather) |
-| Configuración | `python-dotenv` |
-| Planificación | Cron / cualquier scheduler |
+```
+                    ┌──────────────────────────────────────────────┐
+  ESIOS / REE ─────►│                                              │
+  Precios PVPC      │                                              │
+                    │   BRONZE  →  SILVER  →  GOLD  →  INFORME     │
+  OpenWeatherMap ──►│   (S3)       (RDS)      (RDS)    (S3 HTML)   │
+  Forecast 5 días   │                                              │
+                    │                                              │
+  Excel clientes ──►│      Pipeline Medallion en AWS Fargate       │
+                    └──────────────────────────────────────────────┘
+```
+
+| Capa | Qué ocurre |
+|------|-----------|
+| **Bronze** | Extracción raw de ESIOS, OpenWeatherMap y clientes. JSON sin tocar en S3. |
+| **Silver** | Limpieza, normalización y cálculo de generación PV con motor físico propio. |
+| **Gold** | Star schema relacional listo para analistas: dims + facts con histórico. |
+| **Output** | Informe HTML diario con decisiones operativas y previsión a 5 días. |
 
 ---
 
-## 🚀 Inicio Rápido
+## El motor de cálculo solar
 
-```bash
-# 1. Clonar e instalar
-git clone https://github.com/aitor-industrial-data/Data-Projects-Repo/tree/main/05_ETL_Pipelines/05.02_SunSaver_ETL.git
-cd sunsaver-etl
-pip install -r requirements.txt
+El núcleo diferencial del proyecto. No usa estimaciones genéricas: calcula la generación real hora a hora aplicando física de paneles solares:
 
-# 2. Configurar el entorno
-cp .env.example .env
-# Editar .env → añadir WEATHER_API_KEY (OpenWeatherMap)
-#             → opcionalmente configurar DB_PATH
+1. **Posición solar** — elevación y azimut exactos para las coordenadas GPS del cliente (`pvlib`)
+2. **Irradiancia GHI** — modelo Haurwitz + factor Kasten-Czeplak de nubosidad + coeficiente por tipo de meteoro (tormenta / lluvia / nieve / despejado...)
+3. **Descomposición Erbs** — separa irradiancia directa (DNI) y difusa (DHI) por índice de claridad
+4. **POA** — irradiancia real sobre el plano del panel según inclinación y orientación del cliente
+5. **Temperatura de célula** — modelo Faiman con enfriamiento por velocidad del viento
+6. **Potencia AC** — derating térmico (γ = −0.4 %/°C), pérdidas de sistema y Performance Ratio final
 
-# 3. Añadir las instalaciones
-# Editar data/clients_source.xlsx con los datos de cada cliente
-
-# 4. Ejecutar el pipeline completo
-cd src
-python orchestrator.py
-
-# O reanudar desde un stage concreto (p.ej., tras un fallo de la API meteorológica)
-python orchestrator.py --stage 3
-
-# Dry-run para validar el plan de ejecución sin ejecutar nada
-python orchestrator.py --dry-run
+```python
+# engine_pv_physics.py — cada función es independiente y testeable
+alfa, azimuth = calculate_solar_position(lat, lon, forecast_time_utc)
+ghi           = calculate_ghi(alfa, clouds_pct, weather_id)
+dni, dhi      = decompose_erbs(ghi, alfa, forecast_time_utc)
+poa           = calculate_total_poa(dni, dhi, ghi, alfa, azimuth, angle, aspect)
+t_cell        = calculate_t_cell(temp_ambient, wind_speed, poa)
+p_gen, pr     = calculate_power_output(poa, t_cell, peak_power_kw, loss_pct)
 ```
+
+> 📄 Documentación completa del motor → [`docs/02_motor_pv.md`](docs/02_motor_pv.md)
 
 ---
 
-## 📁 Estructura del Proyecto
+## Arquitectura AWS
 
 ```
-05.02_SunSaver_ETL/
-├── data/
-│   ├── clients_source.xlsx     # Configuración maestra de instalaciones
-│   └── sunsaver.db             # Base de datos SQLite (creada automáticamente)
-├── docs/                       # Diagramas de arquitectura y documentación de referencia
-├── logs/                       # Logs de ejecución del pipeline
+┌──────────────────────────────────────────────────────────────────────────┐
+│    GitHub Actions                                                        │
+│    push → main  ──►  docker build  ──►  ECR (SHA tag + latest)           │
+│                          │                                               │
+│                          ▼  register-task-definition                     │
+└──────────────────────────┼───────────────────────────────────────────────┘
+                           │
+┌──────────────────────────▼───────────────────────────────────────────────┐
+│    EventBridge Scheduler                                                 │
+│    cron(05 19 * * ? *)  →  ECS RunTask  →  Fargate  (1 vCPU / 2 GB)      │
+│                                │                                         │
+│         ┌──────────────────────┼──────────────────────┐                  │
+│         ▼                      ▼                      ▼                  │
+│     S3 Bucket            RDS PostgreSQL       SSM Parameter Store        │
+│  bronze/  reports/       silver + gold         DB creds, API keys        │
+│  (raw JSON + HTML)        star schema          (nunca en código)         │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+| Servicio | Uso | Por qué |
+|----------|-----|---------|
+| **ECS Fargate** | Ejecuta el pipeline | Serverless: sin instancias que mantener, pago por ejecución |
+| **ECR** | Registro de imagen Docker | Integrado con ECS, SHA tag por cada deploy |
+| **EventBridge Scheduler** | Dispara el pipeline a las 21h | Cron gestionado, sin cron servers |
+| **S3** | Bronze raw + informe HTML público | Almacenamiento ilimitado, coste mínimo |
+| **RDS PostgreSQL** | Silver + Gold (star schema) | SQL estándar, directo para analistas |
+| **SSM Parameter Store** | Secretos en producción | Las API keys nunca tocan el código ni las variables de entorno en claro |
+| **CloudWatch Logs** | Logs del pipeline | Trazabilidad completa de cada ejecución |
+| **GitHub Actions + OIDC** | CI/CD sin claves AWS | El workflow asume un rol IAM federado; no hay `AWS_ACCESS_KEY_ID` en ningún secreto |
+
+> 📄 Arquitectura detallada → [`docs/01_arquitectura.md`](docs/01_arquitectura.md)
+
+---
+
+## Plataforma multicliente
+
+El sistema está diseñado para operar con múltiples instalaciones desde el inicio. Cada cliente se define en un Excel interno con sus parámetros específicos —coordenadas GPS, potencia pico, inclinación y orientación del panel, carga nominal, activos desplazables— y el pipeline los procesa a todos en cada ejecución.
+
+```
+clients_source.xlsx
+│
+├── CLT-0001  →  lat: 42.80  lon: -1.70  peak: 16 kW  angle: 30°  aspect: 180°
+├── CLT-0002  →  lat: 41.38  lon:  2.17  peak: 48 kW  angle: 25°  aspect: 200°
+└── CLT-XXXX  →  añadir cliente = nueva fila en el Excel
+```
+
+El motor físico calcula independientemente para cada coordenada: el sol no está en el mismo ángulo en Navarra que en Barcelona a la misma hora.
+
+---
+
+## Output: el informe operativo
+
+**[→ Ver informe live](https://sunsaver-bronze.s3.eu-south-2.amazonaws.com/reports/latest.html)**
+
+El informe generado cada día contiene:
+
+- **KPIs del día** — pico FV previsto, hora de máxima generación, precio mínimo y máximo PVPC
+- **Plan de acción** — decisiones concretas por activo (carretillas, compresores, frío industrial...) ordenadas por prioridad y urgencia
+- **Gráficos horarios** — curva de generación solar y precios PVPC solapados para ver las ventanas de oportunidad
+- **Previsión 5 días** — outlook semanal por clima con fiabilidad indicada (sin PVP disponible más allá de D+1)
+
+> 📄 Lógica del motor de decisiones → [`docs/04_informe_operativo.md`](docs/04_informe_operativo.md)
+
+---
+
+## Modelo de datos
+
+Base de datos relacional PostgreSQL (RDS) con star schema preparado para analistas:
+
+```
+gold.dim_client     →  Parámetros de cada instalación
+gold.dim_assets     →  Activos industriales por cliente
+gold.dim_weather    →  Dimensión meteorológica
+gold.dim_datetime   →  Dimensión temporal
+
+gold.fact_energy_historical  →  Serie histórica completa (acumula ejecuciones)
+gold.fact_energy_forecast    →  Ventana futura activa (se sobreescribe cada día)
+```
+
+> 📄 Esquema completo y diccionario de datos → [`docs/03_modelo_datos.md`](docs/03_modelo_datos.md)
+
+---
+
+## Stack técnico
+
+| Categoría | Tecnología |
+|-----------|-----------|
+| Lenguaje | Python 3.12 |
+| Motor solar | `pvlib`, `numpy` |
+| Datos | `pandas`, `SQLAlchemy`, `psycopg2` |
+| APIs | `requests` + ESIOS (REE) + OpenWeatherMap |
+| Base de datos | PostgreSQL 15 en AWS RDS |
+| Infraestructura | AWS Fargate · S3 · RDS · ECR · EventBridge · SSM · CloudWatch |
+| CI/CD | GitHub Actions → ECR → ECS (OIDC, sin claves hardcodeadas) |
+| Contenerización | Docker (imagen Python slim) |
+
+---
+
+## Estructura del repositorio
+
+```
+SunSaver-ETL-Platform/
+│
 ├── src/
-│   ├── orchestrator.py         # Controlador del pipeline
-│   ├── db_manager.py           # Resolución de la ruta a la base de datos
-│   ├── pv_generation_engine.py # Modelos físicos (GHI, DNI, POA, Faiman)
-│   ├── extract_*.py            # Extractores capa Bronce
-│   ├── transform_*.py          # Transformadores capa Plata
-│   └── transform_gold_*.py     # Constructores capa Oro
-├── venv/
-├── requirements.txt
-└── README.md
+│   ├── engine_pv_physics.py             # Motor de cálculo solar (núcleo del sistema)
+│   ├── run.py                           # Orquestador del pipeline (8 stages)
+│   │
+│   ├── bronze_ingest_prices_ree.py      # Extracción ESIOS/REE
+│   ├── bronze_ingest_weather_owm.py     # Extracción OpenWeatherMap
+│   ├── bronze_ingest_clients.py         # Extracción clientes desde Excel
+│   ├── bronze_ingest_assets.py          # Extracción activos industriales
+│   │
+│   ├── silver_transform_*.py            # Limpieza y normalización (4 módulos)
+│   ├── silver_calc_pv_generation.py     # Aplicación del motor solar sobre Silver
+│   │
+│   ├── gold_dim_*.py                    # Carga de dimensiones (4 módulos)
+│   ├── gold_fact_energy_historical.py
+│   ├── gold_fact_energy_forecast.py
+│   │
+│   ├── gold_fact_energy_decisions.py    # Motor de reglas: genera decisiones operativas
+│   ├── report_generator.py              # Renderiza HTML y publica en S3
+│   │
+│   ├── config_paths.py                  # Rutas S3 y helpers AWS
+│   ├── database_utils.py                # Engine SQLAlchemy
+│   └── audit_metadata.py                # Registro de ejecuciones
+│
+├── docs/
+│   ├── 01_arquitectura.md
+│   ├── 02_motor_pv.md
+│   ├── 03_modelo_datos.md
+│   └── 04_informe_operativo.md
+│
+├── .github/workflows/deploy.yml         # CI/CD → ECR + ECS
+├── task-definition.json                 # ECS Fargate task definition
+├── Dockerfile
+└── requirements.txt
 ```
 
 ---
 
-## 🔧 Variables de Entorno
+## Documentación técnica
 
-| Variable | Obligatoria | Descripción |
-|----------|-------------|-------------|
-| `WEATHER_API_KEY` | ✅ Sí | Clave API de OpenWeatherMap (nivel gratuito suficiente) |
-| `DB_PATH` | ❌ Opcional | Sobrescribe la ruta por defecto de SQLite (`data/sunsaver.db`) |
-
----
-
-## 📈 Valor de Negocio
-
-| Capacidad | Impacto |
-|-----------|---------|
-| Previsión hora a hora de generación + precio | Permite desplazamiento de cargas para ahorrar un 20–40% en coste de red eléctrica |
-| Arquitectura multi-cliente | Un solo pipeline sirve a N instalaciones industriales simultáneamente |
-| Etiquetado de periodos tarifarios españoles (P1–P6) | Integración directa con sistemas de facturación y gestión de demanda |
-| Capa Bronce con auditoría completa | Cumplimiento regulatorio y capacidad de replay histórico |
-| Modelo de generación basado en física (no en ML) | Fiable incluso para instalaciones nuevas sin datos históricos |
-| Patrón UPSERT idempotente | Seguro de re-ejecutar sin corrupción de datos |
+| Documento | Contenido |
+|-----------|-----------|
+| [01 · Arquitectura](docs/01_arquitectura.md) | Pipeline detallado, AWS, decisiones de diseño |
+| [02 · Motor PV](docs/02_motor_pv.md) | Física solar, fórmulas, modelos aplicados |
+| [03 · Modelo de datos](docs/03_modelo_datos.md) | Star schema, diccionario de campos, lineaje |
+| [04 · Informe operativo](docs/04_informe_operativo.md) | Motor de decisiones, reglas, output HTML |
 
 ---
 
-
-> *Construido para responsables de energía industrial que están hartos de hojas de cálculo y listos para ingeniería de datos real.*
+<sub>Desarrollado con Python · Desplegado en AWS eu-south-2 (España) · Ejecución diaria automática</sub>
