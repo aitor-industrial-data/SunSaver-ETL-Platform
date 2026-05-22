@@ -19,7 +19,7 @@ No es un dashboard de monitorización en tiempo real. Es un **plan de acción pa
 ```
 gold.fact_energy_forecast   ─┐
 gold.dim_assets              ├─►  gold_fact_energy_decisions.py
-gold.dim_client             ─┘      (motor de reglas → dict)
+gold.dim_client             ─┘         (motor de reglas → dict)
                                               │
                                               ▼
                                     report_generator.py
@@ -167,7 +167,7 @@ Renderiza el dict del motor de decisiones en HTML puro (sin framework frontend) 
 En producción (`ENVIRONMENT=PRD`), el informe se sube en dos objetos:
 
 ```
-s3://sunsaver-bronze/reports/2026-05-23/CLT-0001_energy_report.html   # histórico
+s3://sunsaver-bronze/reports/2026-05-23/CLT-0001_energy_report.html    # histórico
 s3://sunsaver-bronze/reports/latest.html                               # URL fija
 ```
 
@@ -187,4 +187,4 @@ El motor está diseñado para añadir reglas sin tocar la arquitectura. Próxima
 
 ---
 
-[← Modelo de datos](03_modelo_datos.md) · [↑ README](../README.md)
+[← Modelo de datos](03_modelo_datos.md) · [CI/CD →](05_ci_cd_despliegue.md) · [↑ README](../README.md)
