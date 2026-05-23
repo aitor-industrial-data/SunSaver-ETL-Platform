@@ -22,7 +22,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from gold_fact_energy_decisions_v2 import build_energy_decisions
+from gold_fact_energy_decisions import build_energy_decisions
 from logger_config import setup_logging
 
 load_dotenv()
