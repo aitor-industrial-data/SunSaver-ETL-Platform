@@ -134,7 +134,7 @@ STAGE 8  ─── Output
 
 **EventBridge Scheduler** — Cron `05 19 * * ? *` UTC = 21:05 hora Madrid. Lanza `ECS RunTask` directamente sobre la familia `sunsaver-etl-task` sin número de revisión → coge siempre la última registrada por el CI/CD. Sin Lambda intermediaria.
 
-**S3 `sunsaver-bronze`** — Doble función: almacén Bronze particionado por fuente (JSON sin transformar, trazabilidad completa) y servidor del informe HTML. Solo `reports/latest.html` tiene ACL pública; el resto del bucket es privado. El informe histórico fechado sirve para auditoría.
+**S3 `sunsaver-bronze`** — Doble función: almacén Bronze particionado por fuente (JSON sin transformar, trazabilidad completa) y servidor del informe HTML. Solo `reports/latest.html` es público mediante política de bucket (`s3:GetObject`); el resto del bucket es privado. El informe histórico fechado sirve para auditoría.
 
 **RDS PostgreSQL 15** — Tres schemas: `silver` (datos curados, se reconstruye en cada ejecución), `gold` (star schema, el histórico se acumula, el forecast se sobreescribe), `etl` (auditoría de ejecuciones). Conexión con `sslmode=require`. Accesible directamente con cualquier cliente SQL estándar para analistas.
 

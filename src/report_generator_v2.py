@@ -22,7 +22,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from gold_fact_energy_decisions import build_energy_decisions
+from gold_fact_energy_decisions_v2 import build_energy_decisions
 from logger_config import setup_logging
 
 load_dotenv()
@@ -123,6 +123,12 @@ def _fmt_date_es(date_str: str) -> str:
 
 # ── SECCIONES HTML ────────────────────────────────────────────────────────────
 
+def _opp_color(idx: int) -> str:
+    if idx >= 70: return "#3fb950"
+    if idx >= 40: return "#d29922"
+    return "#8b949e"
+
+
 def _render_header(data: dict) -> str:
     client    = data["client"]
     today     = data["today"]
@@ -130,21 +136,33 @@ def _render_header(data: dict) -> str:
     gen_at    = data["generated_at"]
     date_es   = _fmt_date_es(today["date"])
     rel_color = _reliability_color(kpis["forecast_reliability"])
+    opp_idx   = today.get("opportunity_index", 0)
+    opp_col   = _opp_color(opp_idx)
+    saving    = today.get("total_saving_eur", 0.0)
+    saving_str = f"{saving:.2f}\u00a0€" if saving < 10 else f"{saving:.1f}\u00a0€"
 
     return f"""
     <div class="header">
       <div class="header-left">
         <div class="badge"><span class="dot"></span>INFORME ACTIVO</div>
         <h1>Estrategia Energética · Plan de Acción</h1>
-        <p class="subtitle">{client['name']} &nbsp;·&nbsp; "Diseñamos zumos para que descubras que el naranja existe fuera de la sintaxis de Visual Studio."</p>
+        <p class="subtitle">{client['name']} &nbsp;·&nbsp; "{client.get('description', '')}"</p>
       </div>
       <div class="header-right">
         <div class="client-id">{client['client_id']}</div>
         <div class="report-date">{date_es}</div>
         <div class="generated">Generado: {gen_at}</div>
         <div class="reliability" style="color:{rel_color}">
-          ● Fiabilidad: <strong>{kpis['forecast_reliability'].upper()}</strong>
+          \u25cf Fiabilidad: <strong>{kpis['forecast_reliability'].upper()}</strong>
           {'· PVP confirmado OMIE' if kpis['has_pvp'] else '· Sin PVP (D+1 pendiente)'}
+        </div>
+        <div class="opp-row">
+          <span class="opp-label">Oportunidad</span>
+          <span class="opp-bar-wrap">
+            <span class="opp-bar" style="width:{opp_idx}%;background:{opp_col}"></span>
+          </span>
+          <span class="opp-value" style="color:{opp_col}">{opp_idx}/100</span>
+          <span class="opp-saving" style="color:{opp_col}">&nbsp;·&nbsp;~{saving_str}/día</span>
         </div>
       </div>
     </div>"""
@@ -331,7 +349,7 @@ def _render_footer(client_id: str, generated_at: str) -> str:
     return f"""
     <div class="footer">
       <span>Sistema de gestión energética · ETL SunSaver · gold.fact_energy_forecast · {client_id}</span>
-      <span class="footer-logo">ENERGY·OS v2.1</span>
+      <span class="footer-logo">ENERGY·OS v2.2</span>
     </div>"""
 
 
@@ -361,6 +379,16 @@ h1 { font-size:22px; font-weight:700; }
                font-family:'IBM Plex Mono',monospace; }
 .generated   { font-size:10px; color:#8b949e; margin-top:4px; }
 .reliability { font-size:11px; margin-top:6px; }
+.opp-row     { display:flex; align-items:center; gap:6px; margin-top:8px; flex-wrap:wrap; }
+.opp-label   { font-size:10px; color:#8b949e; text-transform:uppercase;
+               letter-spacing:.8px; white-space:nowrap; }
+.opp-bar-wrap{ flex:0 0 80px; height:4px; background:rgba(255,255,255,0.1);
+               border-radius:2px; overflow:hidden; }
+.opp-bar     { display:block; height:100%; border-radius:2px;
+               transition:width .4s ease; }
+.opp-value   { font-family:'IBM Plex Mono',monospace; font-size:11px;
+               font-weight:700; white-space:nowrap; }
+.opp-saving  { font-size:11px; font-weight:600; white-space:nowrap; }
 .kpi-strip   { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr));
                gap:1px; background:rgba(255,255,255,0.08);
                border-bottom:1px solid rgba(255,255,255,0.08); }

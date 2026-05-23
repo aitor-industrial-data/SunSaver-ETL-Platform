@@ -32,7 +32,7 @@ import gold_fact_energy_historical
 import gold_fact_energy_forecast
 import gold_dim_assets
 import gold_fact_energy_decisions
-import report_generator
+import report_generator_v2
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 
@@ -61,7 +61,7 @@ PIPELINE: list[tuple[int, str, Callable]] = [
     (6, "gold_fact_energy_historical", gold_fact_energy_historical.load_fact_energy_historical),
     (7, "gold_fact_energy_forecast",   gold_fact_energy_forecast.load_fact_energy_forecast),
     (8, "gold_fact_energy_decisions",  lambda: gold_fact_energy_decisions.build_energy_decisions("CLT-0001")),
-    (8, "generate_report",             lambda: report_generator.generate_report("CLT-0001")),
+    (8, "generate_report",             lambda: report_generator_v2.generate_report("CLT-0001")),
 ]
 
 # ─────────────────────────────────────────────────────────────────────────────

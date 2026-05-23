@@ -171,7 +171,7 @@ s3://sunsaver-bronze/reports/2026-05-23/CLT-0001_energy_report.html    # histór
 s3://sunsaver-bronze/reports/latest.html                               # URL fija
 ```
 
-Solo `latest.html` tiene ACL pública. El histórico fechado es privado y sirve para auditoría. La URL fija nunca cambia, lo que permite compartirla como enlace permanente (en un CV, en una reunión, en un email al cliente).
+Solo `latest.html` es público mediante política de bucket (`s3:GetObject`). El histórico fechado es privado y sirve para auditoría. La URL fija nunca cambia, lo que permite compartirla como enlace permanente (en un CV, en una reunión, en un email al cliente).
 
 ---
 

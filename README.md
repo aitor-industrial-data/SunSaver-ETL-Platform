@@ -118,7 +118,7 @@ p_gen, pr     = calculate_power_output(poa, t_cell, peak_kw, loss_pct)
 | **ECS Fargate** | Contenedor efímero: arranca, ejecuta el pipeline, muere. Sin instancias permanentes. |
 | **ECR** | Imagen Docker con doble tag SHA+latest. Trazabilidad commit → ejecución. |
 | **EventBridge Scheduler** | Cron gestionado. Lanza `ECS RunTask` directo, sin Lambda. |
-| **S3** | Bronze raw + informe HTML. Solo `reports/latest.html` es público (ACL). |
+| **S3** | Bronze raw + informe HTML. Solo `reports/latest.html` es público mediante política de bucket. |
 | **RDS PostgreSQL 15** | Schemas `silver` + `gold` + `etl`. SQL estándar para analistas. `sslmode=require`. |
 | **SSM Parameter Store** | 7 parámetros en `/sunsaver/prd/`. Nunca en código ni `.env` en producción. |
 | **CloudWatch Logs** | Logs estructurados por módulo. Formato fijo para facilitar filtrado. |
