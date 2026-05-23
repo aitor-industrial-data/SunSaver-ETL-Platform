@@ -22,7 +22,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from gold_fact_energy_decisions import build_energy_decisions
+from gold_fact_energy_decisions_v2 import build_energy_decisions
 from logger_config import setup_logging
 
 load_dotenv()
@@ -123,6 +123,12 @@ def _fmt_date_es(date_str: str) -> str:
 
 # ── SECCIONES HTML ────────────────────────────────────────────────────────────
 
+def _opp_color(idx: int) -> str:
+    if idx >= 70: return "#3fb950"
+    if idx >= 40: return "#d29922"
+    return "#8b949e"
+
+
 def _render_header(data: dict) -> str:
     client    = data["client"]
     today     = data["today"]
@@ -130,21 +136,33 @@ def _render_header(data: dict) -> str:
     gen_at    = data["generated_at"]
     date_es   = _fmt_date_es(today["date"])
     rel_color = _reliability_color(kpis["forecast_reliability"])
+    opp_idx   = today.get("opportunity_index", 0)
+    opp_col   = _opp_color(opp_idx)
+    saving    = today.get("total_saving_eur", 0.0)
+    saving_str = f"{saving:.2f}\u00a0€" if saving < 10 else f"{saving:.1f}\u00a0€"
 
     return f"""
     <div class="header">
       <div class="header-left">
         <div class="badge"><span class="dot"></span>INFORME ACTIVO</div>
         <h1>Estrategia Energética · Plan de Acción</h1>
-        <p class="subtitle">{client['name']} &nbsp;·&nbsp; "Diseñamos zumos para que descubras que el naranja existe fuera de la sintaxis de Visual Studio."</p>
+        <p class="subtitle">{client['name']} &nbsp;·&nbsp; "{client.get('description', '')}"</p>
       </div>
       <div class="header-right">
         <div class="client-id">{client['client_id']}</div>
         <div class="report-date">{date_es}</div>
         <div class="generated">Generado: {gen_at}</div>
         <div class="reliability" style="color:{rel_color}">
-          ● Fiabilidad: <strong>{kpis['forecast_reliability'].upper()}</strong>
+          \u25cf Fiabilidad: <strong>{kpis['forecast_reliability'].upper()}</strong>
           {'· PVP confirmado OMIE' if kpis['has_pvp'] else '· Sin PVP (D+1 pendiente)'}
+        </div>
+        <div class="opp-row">
+          <span class="opp-label">Oportunidad</span>
+          <span class="opp-bar-wrap">
+            <span class="opp-bar" style="width:{opp_idx}%;background:{opp_col}"></span>
+          </span>
+          <span class="opp-value" style="color:{opp_col}">{opp_idx}/100</span>
+          <span class="opp-saving" style="color:{opp_col}">&nbsp;·&nbsp;~{saving_str}/día</span>
         </div>
       </div>
     </div>"""
@@ -188,6 +206,15 @@ def _render_charts(today: dict) -> str:
     labels     = json.dumps([f"{h:02d}h" for h in range(24)])
     pv_data    = json.dumps([round(pv_map[h]["pv_power_gen_kw"], 2) if h in pv_map else 0
                              for h in range(24)])
+    # Consumo basal previsto (líneas de producción + instalación, no flexible).
+    # Se muestra como línea roja sobre la generación FV para visualizar que la
+    # demanda siempre supera la producción solar — justifica por qué las horas
+    # solares no son "gratuitas" y el precio de red sigue siendo el de mercado.
+    consumption_data = json.dumps([
+        round(pv_map[h]["power_consumption_kw"], 1)
+        if h in pv_map and pv_map[h].get("power_consumption_kw") is not None else None
+        for h in range(24)
+    ])
     pvp_data   = json.dumps([round(pvp_map[h]["price_pvpc_eur_mwh"], 1)
                               if h in pvp_map and pvp_map[h]["price_pvpc_eur_mwh"] is not None
                               else None
@@ -207,7 +234,7 @@ def _render_charts(today: dict) -> str:
           </div>
         </div>
         <div class="chart-box">
-          <div class="chart-label">Generación FV prevista (kW) — 00h a 23h hora local</div>
+          <div class="chart-label">Generación FV prevista vs Consumo basal (kW) — 00h a 23h hora local</div>
           <div style="position:relative;height:180px;">
             <canvas id="chartPV"></canvas>
           </div>
@@ -216,10 +243,11 @@ def _render_charts(today: dict) -> str:
     </div>
     <script>
     (function(){{
-      var labels    = {labels};
-      var pvpData   = {pvp_data};
-      var pvpColors = {pvp_colors};
-      var pvData    = {pv_data};
+      var labels       = {labels};
+      var pvpData      = {pvp_data};
+      var pvpColors    = {pvp_colors};
+      var pvData       = {pv_data};
+      var consumptionData = {consumption_data};
 
       new Chart(document.getElementById('chartPVP'), {{
         type: 'bar',
@@ -241,13 +269,29 @@ def _render_charts(today: dict) -> str:
 
       new Chart(document.getElementById('chartPV'), {{
         type: 'line',
-        data: {{ labels, datasets: [{{ data: pvData, borderColor:'#58a6ff',
-          backgroundColor:'rgba(88,166,255,0.15)', fill:true, tension:0.4,
-          pointRadius:3, pointBackgroundColor:'#58a6ff' }}] }},
+        data: {{ labels, datasets: [
+          {{
+            label: 'Generación FV',
+            data: pvData, borderColor:'#58a6ff',
+            backgroundColor:'rgba(88,166,255,0.12)', fill:true, tension:0.4,
+            pointRadius:2, pointBackgroundColor:'#58a6ff', borderWidth:2
+          }},
+          {{
+            label: 'Consumo basal',
+            data: consumptionData, borderColor:'#f85149',
+            backgroundColor:'transparent', fill:false, tension:0.3,
+            pointRadius:0, borderWidth:1.5, borderDash:[4,3]
+          }}
+        ] }},
         options: {{
           responsive: true, maintainAspectRatio: false,
-          plugins: {{ legend: {{ display: false }},
-            tooltip: {{ callbacks: {{ label: ctx => ctx.parsed.y.toFixed(1) + ' kW' }} }} }},
+          plugins: {{
+            legend: {{ display: true, position:'top',
+              labels: {{ color:'#8b949e', font:{{ size:9 }}, boxWidth:12, padding:10 }} }},
+            tooltip: {{ callbacks: {{ label: ctx =>
+              ctx.dataset.label + ': ' + (ctx.parsed.y != null ? ctx.parsed.y.toFixed(1) + ' kW' : '—')
+            }} }}
+          }},
           scales: {{
             x: {{ ticks: {{ color:'#8b949e', font:{{ size:9 }}, autoSkip:false, maxRotation:0 }},
                   grid: {{ color:'rgba(255,255,255,0.05)' }} }},
@@ -270,6 +314,23 @@ def _render_decisions(decisions: list[dict]) -> str:
         icon  = ASSET_ICONS.get(d["asset_type"], "⚙️")
         label = URGENCY_LABEL.get(d["urgency"], d["urgency"].upper())
 
+        # Ahorro: solo mostrar si es significativo (≥ 0.10 €).
+        # Si no hay ahorro monetario (activo no flexible, alerta de pico)
+        # mostramos el saving_tag original (ej. "Alerta pico") sin el prefijo "Ahorro ~".
+        saving_eur = d.get("saving_eur", 0.0)
+        if saving_eur >= 0.10:
+            saving_html = f'<div class="decision-saving" style="color:{accent}">{d["saving_tag"]}</div>'
+        elif d.get("saving_tag", "").startswith("Ahorro"):
+            saving_html = ""  # Ahorro calculado pero demasiado pequeño — no contaminar con 0.00 €
+        else:
+            saving_html = f'<div class="decision-saving" style="color:#8b949e">{d["saving_tag"]}</div>'
+
+        # Ventana flexible del activo: si existe en el dict, la mostramos como
+        # píldora secundaria para que quede claro el margen de maniobra real.
+        flex_w = d.get("flex_window_label", "")
+        flex_pill = (f'<span class="flex-window-pill">⏱ Flex: {flex_w}</span>'
+                     if flex_w else "")
+
         cards += f"""
         <div class="decision-card" style="border-left:3px solid {accent}">
           <div class="decision-icon" style="background:{light};font-size:22px">{icon}</div>
@@ -277,11 +338,12 @@ def _render_decisions(decisions: list[dict]) -> str:
             <div class="decision-meta">
               <span class="decision-time">{d['time_window']}</span>
               <span class="decision-tag" style="background:{light};color:{accent}">{label}</span>
+              {flex_pill}
             </div>
             <div class="decision-title">{d['action']} — {d['asset_name']}</div>
             <div class="decision-reason">{d['reason']}</div>
           </div>
-          <div class="decision-saving" style="color:{accent}">{d['saving_tag']}</div>
+          {saving_html}
         </div>"""
 
     return f'<div class="decisions-grid">{cards}</div>'
@@ -331,7 +393,7 @@ def _render_footer(client_id: str, generated_at: str) -> str:
     return f"""
     <div class="footer">
       <span>Sistema de gestión energética · ETL SunSaver · gold.fact_energy_forecast · {client_id}</span>
-      <span class="footer-logo">ENERGY·OS v2.1</span>
+      <span class="footer-logo">ENERGY·OS v2.2</span>
     </div>"""
 
 
@@ -361,6 +423,16 @@ h1 { font-size:22px; font-weight:700; }
                font-family:'IBM Plex Mono',monospace; }
 .generated   { font-size:10px; color:#8b949e; margin-top:4px; }
 .reliability { font-size:11px; margin-top:6px; }
+.opp-row     { display:flex; align-items:center; gap:6px; margin-top:8px; flex-wrap:wrap; }
+.opp-label   { font-size:10px; color:#8b949e; text-transform:uppercase;
+               letter-spacing:.8px; white-space:nowrap; }
+.opp-bar-wrap{ flex:0 0 80px; height:4px; background:rgba(255,255,255,0.1);
+               border-radius:2px; overflow:hidden; }
+.opp-bar     { display:block; height:100%; border-radius:2px;
+               transition:width .4s ease; }
+.opp-value   { font-family:'IBM Plex Mono',monospace; font-size:11px;
+               font-weight:700; white-space:nowrap; }
+.opp-saving  { font-size:11px; font-weight:600; white-space:nowrap; }
 .kpi-strip   { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr));
                gap:1px; background:rgba(255,255,255,0.08);
                border-bottom:1px solid rgba(255,255,255,0.08); }
@@ -392,6 +464,9 @@ h1 { font-size:22px; font-weight:700; }
                   font-weight:700; color:#58a6ff; }
 .decision-tag   { font-size:9px; font-weight:700; letter-spacing:1px;
                   padding:2px 8px; border-radius:3px; text-transform:uppercase; }
+.flex-window-pill { font-size:10px; color:#8b949e; background:rgba(139,148,158,0.10);
+                    border:1px solid rgba(139,148,158,0.22); border-radius:4px;
+                    padding:1px 8px; white-space:nowrap; letter-spacing:.3px; }
 .decision-title  { font-size:13px; font-weight:700; margin-bottom:5px; }
 .decision-reason { font-size:12px; color:#8b949e; line-height:1.55; }
 .decision-saving { font-size:11px; font-weight:700; text-align:right;
