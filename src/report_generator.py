@@ -259,7 +259,15 @@ def _render_charts(today: dict) -> str:
             tooltip: {{ callbacks: {{ label: ctx => ctx.parsed.y != null
               ? ctx.parsed.y.toFixed(0) + ' €/MWh' : 'Sin dato' }} }} }},
           scales: {{
-            x: {{ ticks: {{ color:'#8b949e', font:{{ size:9 }}, autoSkip:false, maxRotation:0 }},
+            x: {{ ticks: {{ 
+                    color:'#8b949e', 
+                    font:{{ size:9 }}, 
+                    autoSkip:false, 
+                    maxRotation:0,
+                    callback: function(val, index) {{
+                      return index % 2 === 0 ? this.getLabelForValue(val) : '';
+                    }}
+                  }},
                   grid: {{ color:'rgba(255,255,255,0.05)' }} }},
             y: {{ ticks: {{ color:'#8b949e', font:{{ size:9 }}, callback: v => v+'€' }},
                   grid: {{ color:'rgba(255,255,255,0.05)' }} }}
@@ -293,9 +301,17 @@ def _render_charts(today: dict) -> str:
             }} }}
           }},
           scales: {{
-            x: {{ ticks: {{ color:'#8b949e', font:{{ size:9 }}, autoSkip:false, maxRotation:0 }},
+            x: {{ ticks: {{ 
+                    color:'#8b949e', 
+                    font:{{ size:9 }}, 
+                    autoSkip:false, 
+                    maxRotation:0,
+                    callback: function(val, index) {{
+                      return index % 2 === 0 ? this.getLabelForValue(val) : '';
+                    }}
+                  }},
                   grid: {{ color:'rgba(255,255,255,0.05)' }} }},
-            y: {{ ticks: {{ color:'#8b949e', font:{{ size:9 }}, callback: v => v+'kW' }},
+            y: {{ ticks: {{ color:'#8b949e', font:{{ size:9 }}, callback: v => v+'€' }},
                   grid: {{ color:'rgba(255,255,255,0.05)' }} }}
           }}
         }}
