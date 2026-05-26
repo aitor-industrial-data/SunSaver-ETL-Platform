@@ -175,7 +175,7 @@ def _render_kpis(kpis: dict) -> str:
                    if kpis["pvp_max"] is not None else "—")
 
     cards = [
-        ("FV pico",     f"{kpis['pv_peak_kw']} kW",   f"{kpis['pv_peak_hour']:02d}h hora local", "#58a6ff"),
+        ("FV pico mañana",     f"{kpis['pv_peak_kw']} kW",   f"{kpis['pv_peak_hour']:02d}h hora local", "#58a6ff"),
         ("PVP mínimo",         pvp_min_str,                    "Ventana económica",                       "#3fb950"),
         ("PVP máximo",         pvp_max_str,                    "Evitar consumo",                          "#f85149"),
         ("Horas solar activa", f"{kpis['hours_solar']}h",      "FV > 1 kW",                               "#58a6ff"),
@@ -259,15 +259,7 @@ def _render_charts(today: dict) -> str:
             tooltip: {{ callbacks: {{ label: ctx => ctx.parsed.y != null
               ? ctx.parsed.y.toFixed(0) + ' €/MWh' : 'Sin dato' }} }} }},
           scales: {{
-            x: {{ ticks: {{ 
-                    color:'#8b949e', 
-                    font:{{ size:9 }}, 
-                    autoSkip:false, 
-                    maxRotation:0,
-                    callback: function(val, index) {{
-                      return index % 2 === 0 ? this.getLabelForValue(val) : '';
-                    }}
-                  }},
+            x: {{ ticks: {{ color:'#8b949e', font:{{ size:9 }}, autoSkip:false, maxRotation:0 }},
                   grid: {{ color:'rgba(255,255,255,0.05)' }} }},
             y: {{ ticks: {{ color:'#8b949e', font:{{ size:9 }}, callback: v => v+'€' }},
                   grid: {{ color:'rgba(255,255,255,0.05)' }} }}
@@ -301,17 +293,9 @@ def _render_charts(today: dict) -> str:
             }} }}
           }},
           scales: {{
-            x: {{ ticks: {{ 
-                    color:'#8b949e', 
-                    font:{{ size:9 }}, 
-                    autoSkip:false, 
-                    maxRotation:0,
-                    callback: function(val, index) {{
-                      return index % 2 === 0 ? this.getLabelForValue(val) : '';
-                    }}
-                  }},
+            x: {{ ticks: {{ color:'#8b949e', font:{{ size:9 }}, autoSkip:false, maxRotation:0 }},
                   grid: {{ color:'rgba(255,255,255,0.05)' }} }},
-            y: {{ ticks: {{ color:'#8b949e', font:{{ size:9 }}, callback: v => v+'€' }},
+            y: {{ ticks: {{ color:'#8b949e', font:{{ size:9 }}, callback: v => v+'kW' }},
                   grid: {{ color:'rgba(255,255,255,0.05)' }} }}
           }}
         }}
@@ -396,7 +380,7 @@ def _render_outlook(outlook: dict) -> str:
 
     return f"""
     <div class="section">
-      <div class="section-title">Outlook 4 días · Orientativo</div>
+      <div class="section-title">Outlook 5 días · Orientativo</div>
       <div class="outlook-summary">{summary}</div>
       <div class="outlook-grid">{day_cards}</div>
       <div class="outlook-warning">
