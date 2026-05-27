@@ -192,47 +192,165 @@ def calculate_power_output(poa, t_cell, peak_power, loss_pct):
         return 0.0, 0.0
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# INDUSTRIAL CONSUMPTION MODEL
-# ─────────────────────────────────────────────────────────────────────────────
+import hashlib
+import numpy as np
+import pandas as pd
 
-def calculate_industrial_consumption(forecast_time_utc, nominal_load_kw, temp_ambient_celsius):
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PERFIL DE CARGA — breakpoints (hora, fracción_nominal)
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Cada entrada define un nodo del perfil de carga.
+# Entre nodos se interpola linealmente → sin escalones abruptos.
+# La hora 24 cierra el día con el mismo valor que la hora 0 del día siguiente
+# (ambos son 0.10 en laboral), garantizando continuidad en medianoche.
+#
+#  Laboral (L–V):
+#    · 00–05h  bajo nocturno       0.10
+#    · 05–06h  rampa arranque      0.10 → 0.40
+#    · 06–09h  rampa primer turno  0.40 → 0.95
+#    · 09–13h  pleno primer turno  0.95 → 0.85  (ligera bajada mediodía)
+#    · 13–15h  pausa comida        0.85 → 0.60
+#    · 15–18h  segundo turno       0.60 → 0.90
+#    · 18–22h  bajada tarde        0.90 → 0.60
+#    · 22–24h  rampa nocturno      0.60 → 0.10  ← mismo nivel que 00h siguiente
+#
+#  Sábado: mantenimiento ligero constante  0.20
+#  Domingo: guardia mínima                 0.10
+
+_WEEKDAY_PROFILE = [
+    (0,  0.10),
+    (5,  0.10),
+    (6,  0.40),
+    (9,  0.95),
+    (13, 0.85),
+    (15, 0.60),
+    (18, 0.90),
+    (22, 0.20),
+    (24, 0.10),   # ← cierra al mismo nivel que abre → continuidad en medianoche
+]
+
+_SATURDAY_PROFILE = [(0, 0.20), (24, 0.20)]
+_SUNDAY_PROFILE   = [(0, 0.10), (24, 0.10)]
+
+
+def _interpolated_base(hour_float: float, weekday: int) -> float:
+    """
+    Devuelve la fracción de carga nominal para una hora decimal (p.ej. 14.5 = 14:30),
+    interpolando linealmente entre los breakpoints del perfil del día.
+
+    Args:
+        hour_float: hora del día como float en [0, 24)
+        weekday:    0=lunes … 6=domingo
+
+    Returns:
+        Fracción de carga en [0, 1]
+    """
+    if weekday < 5:
+        profile = _WEEKDAY_PROFILE
+    elif weekday == 5:
+        profile = _SATURDAY_PROFILE
+    else:
+        profile = _SUNDAY_PROFILE
+
+    for i in range(len(profile) - 1):
+        h0, v0 = profile[i]
+        h1, v1 = profile[i + 1]
+        if h0 <= hour_float < h1:
+            t = (hour_float - h0) / (h1 - h0)
+            return v0 + t * (v1 - v0)
+
+    # fallback: último valor del perfil
+    return profile[-1][1]
+
+
+def _day_rng(date_obj, hour: int) -> np.random.Generator:
+    """
+    Generador determinista por (fecha, hora).
+
+    Usar una semilla derivada de la fecha garantiza:
+      · Reproducibilidad: re-ejecutar el ETL para el mismo día da exactamente
+        los mismos valores (idempotencia).
+      · Coherencia inter-día: la variabilidad no "salta" entre el último punto
+        de un día y el primero del siguiente porque ambos están anclados al
+        mismo nivel base del perfil (0.10).
+
+    Args:
+        date_obj: objeto datetime.date
+        hour:     hora entera del día
+
+    Returns:
+        numpy Generator listo para usar
+    """
+    seed_str = f"{date_obj.isoformat()}:{hour:02d}"
+    seed_int = int(hashlib.md5(seed_str.encode()).hexdigest(), 16) % (2 ** 32)
+    return np.random.default_rng(seed_int)
+
+
+def calculate_industrial_consumption(
+    forecast_time_utc,
+    nominal_load_kw: float,
+    temp_ambient_celsius: float,
+) -> float:
     """
     High-fidelity industrial consumption simulation scaled to nominal load.
+
     Models shift patterns, HVAC thermal load and Gaussian process variability.
     Excludes deferrable loads (EVs, batteries) to allow downstream optimisation.
+
+    Mejoras respecto a la versión anterior:
+      1. Perfil suavizado: interpolación lineal entre breakpoints → sin escalones
+         abruptos en los cambios de tramo (p.ej. 22h: 0.60 → 0.12 instantáneo).
+      2. Semilla determinista por (fecha, hora): la variabilidad aleatoria es
+         reproducible, por lo que re-ejecutar el ETL para el mismo timestamp
+         produce exactamente el mismo valor (idempotencia).
+      3. Continuidad en medianoche: el perfil laboral cierra a 0.10 a las 24h,
+         igual que abre a las 00h → no hay salto entre el último punto del día
+         y el primero del día siguiente.
+
+    Args:
+        forecast_time_utc:    timestamp UTC (str, pd.Timestamp o datetime)
+        nominal_load_kw:      potencia nominal de la planta [kW]
+        temp_ambient_celsius: temperatura ambiente [°C]
+
+    Returns:
+        Consumo estimado en kW (≥ 0).
     """
     try:
         dt      = pd.to_datetime(forecast_time_utc)
         hour    = dt.hour
+        minute  = dt.minute
         weekday = dt.weekday()
 
-        if weekday < 5:
-            if   hour < 5:  base = 0.10
-            elif hour < 6:  base = 0.40
-            elif hour < 9:  base = 0.95
-            elif hour < 13: base = 0.85
-            elif hour < 15: base = 0.60
-            elif hour < 18: base = 0.90
-            elif hour < 22: base = 0.60
-            else:           base = 0.12
-        else:
-            base = 0.10 if weekday == 6 else 0.20
+        # ── 1. Base del perfil (interpolada, sin escalones) ───────────────────
+        hour_float = hour + minute / 60.0
+        base = _interpolated_base(hour_float, weekday)
 
-        thermal = 0.0
+        # ── 2. Corrección térmica HVAC ────────────────────────────────────────
+        #    Refrigeración activa por encima de 25 °C; calefacción por debajo de 15 °C.
         if temp_ambient_celsius > 25:
             thermal = (temp_ambient_celsius - 25) * 0.02
         elif temp_ambient_celsius < 15:
             thermal = (15 - temp_ambient_celsius) * 0.01
+        else:
+            thermal = 0.0
 
-        variability = np.random.normal(1.0, 0.03)
+        # ── 3. Variabilidad gaussiana determinista ────────────────────────────
+        #    Semilla derivada de (fecha, hora) → reproducible e idempotente.
+        rng         = _day_rng(dt.date(), hour)
+        variability = rng.normal(1.0, 0.03)
+
+        # ── 4. Consumo final ──────────────────────────────────────────────────
         consumption = nominal_load_kw * (base + thermal) * variability
-
-        return float(max(0, consumption))
+        return float(max(0.0, consumption))
 
     except Exception as exc:
-        logger.warning("[ENGINE] Industrial consumption calculation failed for t=%s: %s", forecast_time_utc, exc)
-        return 0.0
+        # logger.warning(...) — mantener el logger del módulo llamante
+        raise RuntimeError(
+            f"[ENGINE] Industrial consumption calculation failed for t={forecast_time_utc}: {exc}"
+        ) from exc
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────
