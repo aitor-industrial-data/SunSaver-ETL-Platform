@@ -42,8 +42,6 @@ def build_fact_energy_historical(engine: sqlalchemy.engine.Engine) -> int:
     # Para las horas de HOY (D), clean_context aún no tiene datos reales
     # → los JOINs devuelven NULL para todo D.
     #
-    # Solución: el límite superior del upsert es el inicio del día actual (UTC),
-    # es decir, solo procesamos hasta fin de D-1, donde AMBAS fuentes ya existen.
     # ─────────────────────────────────────────────────────────────────────────
     today_start_unix = int(
         datetime.combine(
@@ -66,17 +64,17 @@ def build_fact_energy_historical(engine: sqlalchemy.engine.Engine) -> int:
                     client_id                    TEXT             NOT NULL,
                     unix_time                    BIGINT           NOT NULL,
                     forecast_time_utc            TIMESTAMP WITH TIME ZONE NOT NULL,
-                    pv_gen_kw           DOUBLE PRECISION,
-                    pv_performance_ratio  DOUBLE PRECISION,
-                    poa_wm2               DOUBLE PRECISION,
-                    t_cell_celsius        DOUBLE PRECISION,
-                    consumption_kw        DOUBLE PRECISION,
-                    temp_celsius          DOUBLE PRECISION,
-                    humidity_pct          DOUBLE PRECISION,
-                    clouds_pct            DOUBLE PRECISION,
-                    rain_prob_norm        DOUBLE PRECISION,
-                    wind_speed_mps        DOUBLE PRECISION,
-                    weather_id            INTEGER,
+                    pv_gen_kw                    DOUBLE PRECISION,
+                    pv_performance_ratio         DOUBLE PRECISION,
+                    poa_wm2                      DOUBLE PRECISION,
+                    t_cell_celsius               DOUBLE PRECISION,
+                    consumption_kw               DOUBLE PRECISION,
+                    temp_celsius                 DOUBLE PRECISION,
+                    humidity_pct                 DOUBLE PRECISION,
+                    clouds_pct                   DOUBLE PRECISION,
+                    rain_prob_norm               DOUBLE PRECISION,
+                    wind_speed_mps               DOUBLE PRECISION,
+                    weather_id                   INTEGER,
                     national_price_pvpc_eur_mwh  DOUBLE PRECISION,
                     national_demand_mw           DOUBLE PRECISION,
                     national_pv_gen_mw           DOUBLE PRECISION,
@@ -112,7 +110,7 @@ def build_fact_energy_historical(engine: sqlalchemy.engine.Engine) -> int:
                     f.client_id,
                     f.unix_time,
                     f.forecast_time_utc,
-                    f.pv_power_gen_kw           AS pv_gen_kw,
+                    f.pv_power_gen_kw            AS pv_gen_kw,
                     f.pv_performance_ratio       AS pv_performance_ratio,
                     f.poa_wm2                    AS poa_wm2,
                     f.t_cell_celsius             AS t_cell_celsius,
@@ -150,7 +148,7 @@ def build_fact_energy_historical(engine: sqlalchemy.engine.Engine) -> int:
                 ON CONFLICT (client_id, unix_time)
                 DO UPDATE SET
                     forecast_time_utc           = EXCLUDED.forecast_time_utc,
-                    pv_gen_kw          = EXCLUDED.pv_gen_kw,
+                    pv_gen_kw            = EXCLUDED.pv_gen_kw,
                     pv_performance_ratio = EXCLUDED.pv_performance_ratio,
                     poa_wm2              = EXCLUDED.poa_wm2,
                     t_cell_celsius       = EXCLUDED.t_cell_celsius,
