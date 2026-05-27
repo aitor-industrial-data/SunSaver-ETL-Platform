@@ -1,7 +1,7 @@
 import sqlalchemy
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
-from datetime import datetime, timezone
+from datetime import datetime, date, timezone
 
 from database_utils import get_engine
 from logger_config import setup_logging
@@ -30,11 +30,31 @@ def build_fact_energy_historical(engine: sqlalchemy.engine.Engine) -> int:
     """
     logger.info("[INIT] ── build_fact_energy_historical starting ──────────────")
 
-    now_unix   = int(datetime.now(timezone.utc).timestamp())
     schema     = "gold"
     full_table = f"{schema}.fact_energy_historical"
 
-    logger.info("[EXTRACT] Reading forecast rows with unix_time < %d", now_unix)
+    # ── Ventana segura de upsert ──────────────────────────────────────────────
+    # El ETL corre a ~21:00 UTC cada día.
+    #
+    # · clean_context  → datos reales de D-1 (ayer hasta medianoche)
+    # · clean_prices   → PVPC de D+1 (publicado por ESIOS ~20:15 de hoy)
+    #
+    # Para las horas de HOY (D), clean_context aún no tiene datos reales
+    # → los JOINs devuelven NULL para todo D.
+    #
+    # Solución: el límite superior del upsert es el inicio del día actual (UTC),
+    # es decir, solo procesamos hasta fin de D-1, donde AMBAS fuentes ya existen.
+    # ─────────────────────────────────────────────────────────────────────────
+    today_start_unix = int(
+        datetime.combine(
+            date.today(), datetime.min.time(), tzinfo=timezone.utc
+        ).timestamp()
+    )
+
+    logger.info(
+        "[EXTRACT] Upserting forecast rows with unix_time < %d (start of today UTC)",
+        today_start_unix,
+    )
 
     try:
         with engine.begin() as conn:
@@ -125,7 +145,7 @@ def build_fact_energy_historical(engine: sqlalchemy.engine.Engine) -> int:
                     GROUP BY unix_time
                 ) ctx ON ctx.unix_time = f.unix_time
 
-                WHERE f.unix_time < :now_unix
+                WHERE f.unix_time < :today_start_unix
 
                 ON CONFLICT (client_id, unix_time)
                 DO UPDATE SET
@@ -147,13 +167,13 @@ def build_fact_energy_historical(engine: sqlalchemy.engine.Engine) -> int:
                     national_co2_tco2_mwh       = EXCLUDED.national_co2_tco2_mwh,
                     national_upward_imb_mw      = EXCLUDED.national_upward_imb_mw,
                     _loaded_at_utc              = now()
-            """), {"now_unix": now_unix})
+            """), {"today_start_unix": today_start_unix})
 
             rows_affected = result.rowcount
 
         logger.info(
-            "[DONE] %s updated — rows upserted: %d (unix_time < %d)",
-            full_table, rows_affected, now_unix,
+            "[DONE] %s updated — rows upserted: %d (unix_time < %d / start of today UTC)",
+            full_table, rows_affected, today_start_unix,
         )
         return rows_affected
 
