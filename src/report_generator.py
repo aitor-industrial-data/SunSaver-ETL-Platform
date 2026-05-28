@@ -382,7 +382,7 @@ def _render_outlook(outlook: dict) -> str:
 
     return f"""
     <div class="section">
-      <div class="section-title">Outlook 5 días · Orientativo</div>
+      <div class="section-title">Outlook 4 días · Orientativo</div>
       <div class="outlook-summary">{summary}</div>
       <div class="outlook-grid">{day_cards}</div>
       <div class="outlook-warning">
