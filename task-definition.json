@@ -18,7 +18,10 @@
         { "name": "BRONZE_PREFIX", "value": "bronze/"             },
         { "name": "ENVIRONMENT",   "value": "PRD"},
         { "name": "ENERGY_LLM_BASE_URL",  "value": "https://api.groq.com/openai/v1" },
-        { "name": "ENERGY_LLM_MODEL",     "value": "llama-3.3-70b-versatile" }
+        { "name": "ENERGY_LLM_MODEL",     "value": "llama-3.3-70b-versatile" },
+        { "name": "ENERGY_LLM_TEMPERATURE", "value": "0.2" }, 
+        { "name": "ENERGY_LLM_MAX_TOKENS", "value": "4000"},
+        { "name": "ENERGY_LLM_FALLBACK_RULES", "value": "true"}
       ],
 
       "secrets": [
