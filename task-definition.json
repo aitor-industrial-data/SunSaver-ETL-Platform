@@ -9,7 +9,7 @@
   "containerDefinitions": [
     {
       "name":      "sunsaver-etl",
-      "image": "610140802215.dkr.ecr.eu-south-2.amazonaws.com/sunsaver-etl@sha256:285cacf03233a977d2454808fc82b11e433645df4772b0fabebb971afbb9bb54",
+      "image": "610140802215.dkr.ecr.eu-south-2.amazonaws.com/sunsaver-etl:latest",
       "essential": true,
 
       "environment": [

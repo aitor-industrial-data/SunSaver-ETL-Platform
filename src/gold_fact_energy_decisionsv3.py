@@ -422,6 +422,12 @@ def _build_user_prompt(df_today: pd.DataFrame, df_assets: pd.DataFrame) -> str:
 
 
 def _call_llm(system_prompt: str, user_prompt: str) -> dict:
+    logger.info("[AGENTE] openai version: %s", openai.__version__)
+    import httpx
+    logger.info("[AGENTE] httpx version: %s", httpx.__version__)
+    for k, v in os.environ.items():
+        if "proxy" in k.lower():
+            logger.info("[AGENTE] proxy env: %s=%s", k, v)
     if not HAS_OPENAI:
         raise RuntimeError("Paquete 'openai' no instalado")
 
