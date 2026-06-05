@@ -56,7 +56,7 @@ DEFAULT_CHARGE_HOURS = 4
 # ── CONFIG LLM ───────────────────────────────────────────────────────────────
 LLM_MODEL = os.getenv("ENERGY_LLM_MODEL", "gpt-4o")
 LLM_API_KEY = os.getenv("ENERGY_LLM_API_KEY")
-LLM_BASE_URL = os.getenv("ENERGY_LLM_BASE_URL", "https://api.groq.com/openai/v1")
+LLM_BASE_URL = "https://api.groq.com/openai/v1"
 LLM_TEMPERATURE = float(os.getenv("ENERGY_LLM_TEMPERATURE", "0.2"))
 LLM_MAX_TOKENS = int(os.getenv("ENERGY_LLM_MAX_TOKENS", "4000"))
 USE_LLM_FALLBACK = os.getenv("ENERGY_LLM_FALLBACK_RULES", "true").lower() == "true"
