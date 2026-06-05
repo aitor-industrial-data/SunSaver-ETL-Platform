@@ -54,7 +54,7 @@ MIN_SAVING_EUR = 0.05
 DEFAULT_CHARGE_HOURS = 4
 
 # ── CONFIG LLM ───────────────────────────────────────────────────────────────
-LLM_MODEL = os.getenv("ENERGY_LLM_MODEL", "gpt-4o")
+LLM_MODEL = os.getenv("ENERGY_LLM_MODEL", "llama-3.3-70b-versatile")
 LLM_API_KEY = os.getenv("ENERGY_LLM_API_KEY")
 LLM_BASE_URL = "https://api.groq.com/openai/v1"
 LLM_TEMPERATURE = float(os.getenv("ENERGY_LLM_TEMPERATURE", "0.2"))
