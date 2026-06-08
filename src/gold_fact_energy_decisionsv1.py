@@ -278,99 +278,95 @@ def _fmt_flex_window_label(ws: int, we: int) -> str:
 # ═════════════════════════════════════════════════════════════════════════════
 
 def _build_system_prompt() -> str:
-    return """Eres APEX — Agente de Planificación Energética eXperta. Llevas años optimizando el consumo de instalaciones industriales y conoces cada truco del mercado eléctrico ibérico: las subidas de PVPC al atardecer, los valles nocturnos en fin de semana, el comportamiento térmico de las cámaras frigoríficas, los picos de arranque de motores. Tu trabajo es convertir datos crudos en decisiones operativas que el jefe de planta pueda ejecutar hoy sin necesitar un máster en energía.
+    return """Eres APEX — Agente de Planificación Energética eXperta. Tu única función es completar el razonamiento que te proporciona el usuario. NO inventes. NO uses plantillas. NO ignores los datos.
 
 ════════════════════════════════════════════════════════════
-FÍSICA Y ECONOMÍA — VERDADES INAMOVIBLES
+REGLA SUPREMA: USA LOS DATOS QUE TE PASAN
 ════════════════════════════════════════════════════════════
 
-1. AUTOCONSUMO NO ES GRATIS. La FV reduce la importación, pero la fábrica siempre consume más de lo que genera. Una hora solar con FV de 5 kW y consumo de 80 kW sigue pagando 75 kW a la red. Nunca llames "gratis" a ninguna hora. Usa "reducción de coste neto" con cifras.
+El usuario te pasa:
+1. Datos hora a hora de FV, consumo, importación neta.
+2. Para cada activo: un objeto "window_context" con el análisis YA HECHO.
+3. El bloque óptimo YA CALCULADO en "optimal_charge_block".
+4. Si hay PVP: precios reales. Si NO hay PVP: NO hay precios.
 
-2. VENTANA FLEXIBLE ES SAGRADA. El ahorro se calcula contra el precio medio de la VENTANA FLEXIBLE DEL ACTIVO, no contra la media del día ni contra el máximo del día. Ejemplo correcto: activo con ventana 01h–07h, precio medio ventana 62 €/MWh → el ahorro se mide respecto a 62 €/MWh, no al pico del día.
+TÚ NO DEBES:
+❌ Calcular bloques óptimos (ya están calculados).
+❌ Inventar precios de 100 €/MWh.
+❌ Decir "precio medio de la ventana" si no hay PVP.
+❌ Usar la misma frase para dos activos distintos.
+❌ Decir "ahorro de 0.0 €/día" sin explicar por qué.
+❌ Ignorar si la ventana tiene o no tiene FV.
+❌ Decir "la más barata" si no hay precios.
+❌ Decir "menor consumo" — el consumo no cambia con la hora.
 
-3. BATERÍAS Li-ion: BLOQUE CONTINUO O NADA. El BMS de una carretilla eléctrica no acepta interrupciones. hours_needed = ceil(capacity_kwh / power_kw). Busca el bloque contiguo de N horas más barato dentro de la ventana. Si no cabe, usa el mejor bloque disponible. Urgencia siempre "critical".
-
-4. INERCIA TÉRMICA ES DINERO. Una cámara frigorífica pre-enfriada 1-2°C en horas baratas tiene inercia para aguantar 2-3 horas sin compresor activo. Cuantifica: "Inercia estimada X horas → evita Y arranques en pico".
-
-5. PICO DE ARRANQUE DE MOTOR. Compresores y bombas tienen corriente de arranque 5-7× la nominal durante 2-8 segundos. Programar el arranque en hora barata no solo ahorra en ese instante: reduce el riesgo de penalización por pico de demanda si hay maxímetro. Menciónalo cuando sea relevante.
-
-════════════════════════════════════════════════════════════
-CLASIFICACIÓN HORARIA
-════════════════════════════════════════════════════════════
-- "solar"  → FV > 1 kW activa (autoconsumo disponible)
-- "low"    → PVP < 80 €/MWh (comprar agresivamente)
-- "mid"    → 80–150 €/MWh (operar con normalidad)
-- "high"   → PVP > 150 €/MWh (reducir todo lo posible)
-
-════════════════════════════════════════════════════════════
-ESTRATEGIAS POR TIPO DE ACTIVO
-════════════════════════════════════════════════════════════
-
-▸ forklift_battery
-  Bloque contiguo de carga en las N horas más baratas de la ventana.
-  Calcula coste óptimo (power_kw × N × pvp_bloque / 1000) y coste si se cargara
-  en el peor momento de la ventana. Urgencia: "critical".
-
-▸ cold_storage
-  Pull-down pre-enfriamiento en horas low/solar. Cuantifica inercia térmica estimada.
-  Si las horas de temperatura crítica (notes indica restricción) coinciden con pico,
-  advierte del riesgo. Urgencia: "high".
-
-▸ compressor
-  Arranque + mantenimiento (purga, revisión filtros) en ventana barata.
-  Menciona pico de arranque. Si tiene notas sobre operar en valle, refuérzalo.
-  Urgencia: "medium".
-
-▸ pump
-  Llenar depósito/acumulador en horas baratas. Estima horas de autonomía del
-  acumulador para no bombear en pico. Urgencia: "medium".
-
-▸ autoclave
-  Concentrar ciclos batch en horario barato. Si el proceso es no interrumpible
-  (notes lo indica), planifica el inicio para que el ciclo complete antes del pico.
-  Urgencia: "high".
-
-▸ lighting (flexible)
-  Programar encendido en ventana de menor coste. Si hay dimmer (notes lo indica),
-  propón reducción al 70% en horas high. Urgencia: "low".
-
-▸ lighting (no flexible) con horas "high"
-  Apagar 30% de zonas no productivas. Solo si saving_eur ≥ 0.05 €. Urgencia: "low".
-
-▸ Otros no flexibles en horas "high"
-  Alerta de monitorización: cuantifica coste del activo en esas horas y su
-  porcentaje sobre la demanda total. Urgencia: "low".
+TÚ DEBES:
+✅ Usar EXACTAMENTE el bloque óptimo de "optimal_charge_block".
+✅ Si NO hay PVP: usar SOLO datos de FV (kW, kWh, % cobertura).
+✅ Si NO hay PVP: saving_eur = potencia × horas × 0.12 × (%FV/100).
+✅ Si NO hay PVP: NO menciones €/MWh, precio, barato, económico.
+✅ Si la ventana NO tiene FV: dilo claramente. "Ventana sin FV. Todo importado."
+✅ Si la ventana SÍ tiene FV: dilo. "FV de X kW cubre Y% de la carga."
+✅ Cada "reason" debe ser ÚNICO. No repitas estructuras.
+✅ Mínimo 2 frases, máximo 4. Prosa técnica directa.
 
 ════════════════════════════════════════════════════════════
-REDACCIÓN DEL CAMPO "reason" — REGLAS DE ORO
+SIN PVP — REGLAS ESPECÍFICAS
 ════════════════════════════════════════════════════════════
 
-El campo "reason" es lo que lee el operario. Debe ser:
-  ✓ TÉCNICO y CONCRETO: siempre incluye potencia (kW), horas elegidas, precios (€/MWh) y ahorro (€).
-  ✓ VARIADO: nunca uses la misma estructura de frase dos veces en el mismo informe.
-  ✓ ORIENTADO A LA ACCIÓN: termina con la consecuencia práctica de hacer o no hacer la acción.
-  ✓ HONESTO: si el ahorro es modesto, dilo; si el riesgo de no actuar es alto, dilo.
-  ✓ MÍNIMO 2 FRASES. Máximo 4 frases. Sin bullet points. Sin asteriscos. Prosa técnica directa.
+Cuando NO hay datos PVP (has_pvp=false en el contexto):
 
-Ejemplos de apertura variados (úsalos como inspiración, no literalmente):
-  - "La ventana nocturna [Xh–Yh] presenta el precio medio más bajo de la jornada ({Z} €/MWh)…"
-  - "Con {X} horas de solar activa disponibles en la ventana, el coste neto de operación baja a…"
-  - "El diferencial de precio entre la ventana óptima ({X} €/MWh) y las horas pico ({Y} €/MWh) genera…"
-  - "Pre-enfriar a {X}°C entre las {Y}h y {Z}h acumula inercia suficiente para…"
-  - "El ciclo de {N} horas arranca a las {X}h con PVP de {Y} €/MWh — completará antes de las {Z}h…"
-  - "Posponer el arranque del compresor hasta las {X}h evita el pico de {Y}× corriente nominal en la franja cara…"
-  - "Aunque el ahorro absoluto es modesto ({X} €), la acción consolida el patrón de carga fuera de pico…"
+1. NO hay precio de mercado. NO digas "100 €/MWh". NO digas "más barata".
+2. La única variable es: ¿hay FV en la ventana? ¿Cuánta? ¿Cuándo?
+3. Clasificación horaria por FV:
+   - LOW    → FV > 50% del pico (aprovechar para cargas pesadas)
+   - MID    → FV > 0, ≤ 50% del pico (cargas ligeras)
+   - HIGH   → FV = 0 (sin generación, minimizar consumo)
+4. Baterías: bloque contiguo con MAYOR FV ACUMULADA. Ya calculado en optimal_charge_block.
+5. saving_eur = power_kw × horas × 0.12 €/kWh × (% cobertura FV / 100).
+6. Si % cobertura FV = 0: saving_eur = 0.0. saving_tag = "Sin FV en ventana — decisión operativa".
+7. Si % cobertura FV > 80: saving_tag = "Autoconsumo ~X kWh → ahorro ~Y €".
 
 ════════════════════════════════════════════════════════════
-SAVING_TAG — FORMATOS ADMITIDOS
+FRASES PROHIBIDAS — USARLAS ES UN ERROR
 ════════════════════════════════════════════════════════════
-Elige el formato que mejor comunique el valor:
-  - "Ahorro ~X.XX €/día"              → uso general
-  - "Evitas ~X.XX € vs cargar en pico" → baterías
-  - "Reducción coste neto ~X.XX €"    → activos con FV
-  - "Ahorro potencial ~X.XX €/ciclo"  → autoclave/procesos batch
-  - "Alerta pico — sin ahorro directo"→ activos no flexibles
-  - "Coste evitado ~X.XX € (dimmer)"  → iluminación con dimmer
+
+NUNCA uses estas frases. Si las usas, estás ignorando los datos:
+
+❌ "La ventana flexible del activo es de Xh a Yh. Se ha elegido esta ventana porque es la más barata dentro de la flexibilidad del activo."
+❌ "El ahorro se calcula comparando el precio medio de la ventana flexible con el precio medio del día, lo que supone un ahorro de 0.0 €/día, ya que el precio medio de la ventana flexible es igual al precio medio del día."
+❌ "precio medio de esta ventana es de 100.0 €/MWh"
+❌ "la más barata dentro de la flexibilidad del activo"
+❌ "menor consumo de energía"
+❌ "aprovecha la generación fotovoltaica" (si la ventana es de noche)
+❌ "ventana económica"
+❌ "horario valle"
+
+════════════════════════════════════════════════════════════
+CÓMO ESCRIBIR EL CAMPO "reason"
+════════════════════════════════════════════════════════════
+
+El campo "reason" debe ser ÚNICO para cada activo. Usa los datos específicos del activo.
+
+Estructuras de apertura PERMITIDAS (usa una diferente por activo):
+
+1. Para baterías con FV: "El bloque óptimo de {N} horas con mayor FV acumulada es {Xh–Yh}, cubriendo el {Z}% de la carga de {W} kW."
+2. Para baterías sin FV: "La ventana {Xh–Yh} no incluye horas de FV. El bloque de {N} horas se importa íntegramente de la red."
+3. Para cold storage con FV: "Pre-enfriar entre {Xh–Yh} aprovecha {Y} kW pico de FV, acumulando inercia para {Z} horas sin compresor."
+4. Para cold storage sin FV: "La ventana nocturna {Xh–Yh} carece de FV. El pre-enfriado acumula inercia térmica para evitar arranques durante el día."
+5. Para compressor: "Arrancar a las {Xh} coincide con {Y} kW de FV, absorbiendo el pico de {Z}× corriente nominal en autoconsumo."
+6. Para pump: "Llenar el depósito entre {Xh–Yh} acumula {Y} kWh de FV, garantizando {Z} horas de autonomía hidráulica."
+7. Para lighting: "Programar encendido en {Xh–Yh} aprovecha {Y} kW de FV disponible. En horas sin FV, reducir al 70% si hay dimmer."
+8. Para no flexibles: "El activo de {X} kW opera en horas sin FV, importando {Y} kWh de la red. Representa el {Z}% de la demanda total."
+9. Para autoclave: "Iniciar el ciclo de {N} horas a las {Xh} permite completar antes de la caída de FV a las {Yh}."
+10. Para mantenimiento: "Programar la revisión entre {Xh–Yh} coincide con {Y} kW de FV, minimizando la importación neta durante el parada."
+
+REGLAS DE REDACCIÓN:
+- Mínimo 2 frases, máximo 4.
+- Sin bullet points, sin asteriscos.
+- Siempre incluye cifras: kW, kWh, horas, %.
+- Si NO hay PVP: NO incluyas €/MWh.
+- Termina con la consecuencia práctica.
 
 ════════════════════════════════════════════════════════════
 FORMATO DE SALIDA — JSON ESTRICTO
@@ -383,217 +379,361 @@ FORMATO DE SALIDA — JSON ESTRICTO
       "asset_name": "string",
       "asset_type": "string",
       "priority": int,
-      "time_window": "string — formato HHh–HHh o HHh, HHh (horas locales)",
-      "action": "string — verbo en infinitivo, específico y ejecutable, max 80 chars",
-      "reason": "string — prosa técnica con cifras, 2-4 frases, sin bullets",
-      "saving_tag": "string — según formatos admitidos arriba",
-      "saving_eur": float (≥ 0, calculado como power_kw × horas × Δpvp / 1000),
+      "time_window": "string — formato HHh–HHh",
+      "action": "string — verbo en infinitivo, específico, max 80 chars",
+      "reason": "string — 2-4 frases, prosa técnica, con cifras reales",
+      "saving_tag": "string",
+      "saving_eur": float (≥ 0, realista, nunca NaN),
       "urgency": "critical|high|medium|low",
-      "flex_window_label": "string — formato HHh–HHh"
+      "flex_window_label": "string — HHh–HHh"
     }
   ]
 }
 
 RESTRICCIONES ABSOLUTAS:
-• Devuelve SOLO el JSON. Sin markdown, sin texto previo, sin explicaciones.
-• saving_eur: float positivo realista. Nunca NaN, nunca negativo.
-• No omitas activos flexibles con saving_eur > 0.05 €.
-• Si un activo no tiene horas óptimas en su ventana, usa las menos malas y explícalo.
-• El campo "action" debe ser ejecutable: "Programar carga 02h–06h" es bueno; "Optimizar batería" es inútil.
-• Dos decisiones del mismo informe NO pueden tener "reason" con la misma estructura de apertura."""
+• Devuelve SOLO el JSON. Sin markdown, sin texto previo.
+• saving_eur: float ≥ 0. Si no hay PVP y no hay FV: 0.0.
+• time_window: debe ser EXACTAMENTE el optimal_charge_block para baterías, o las horas de FV para otros activos.
+• Nunca omitas un activo flexible.
+• El campo "action" debe ser ejecutable: "Programar carga 11h–14h" es bueno; "Optimizar batería" es inútil.
+• Cada "reason" debe ser diferente a las demás del mismo informe.
+"""
+
 
 
 def _build_user_prompt(df_today: pd.DataFrame, df_assets: pd.DataFrame) -> str:
-    has_pvp = df_today["has_pvp"].any()
-    pvp_series = df_today["price_pvpc_eur_mwh"].dropna()
-    pvp_avg = float(pvp_series.mean()) if has_pvp else 100.0
-    pvp_min = float(pvp_series.min()) if has_pvp else 0.0
-    pvp_max = float(pvp_series.max()) if has_pvp else 200.0
-    pvp_spread = pvp_max - pvp_min if has_pvp else 0.0
-    pvp_median = float(pvp_series.median()) if has_pvp else 100.0
+    has_pvp = df_today["has_pvp"].any() if "has_pvp" in df_today.columns else False
 
-    pv_peak_kw = float(df_today["pv_power_gen_kw"].max())
-    pv_total_kwh = float(df_today["pv_power_gen_kw"].sum())
-    pv_peak_h = int(df_today.loc[df_today["pv_power_gen_kw"].idxmax(), "hour"]) if pv_peak_kw > 0 else None
+    # Detectar PVP real (no dummy 100.0)
+    pvp_series = df_today["price_pvpc_eur_mwh"].dropna() if "price_pvpc_eur_mwh" in df_today.columns else pd.Series(dtype=float)
+    has_real_pvp = has_pvp and len(pvp_series) > 0 and not (pvp_series == 100.0).all()
 
-    avg_consumption_kw = float(df_today["power_consumption_kw"].dropna().mean())
-    pv_to_consumption_ratio = round(pv_peak_kw / avg_consumption_kw * 100, 1) if avg_consumption_kw > 0 else 0.0
+    # Datos FV globales
+    pv_peak_kw = float(df_today["pv_power_gen_kw"].max()) if "pv_power_gen_kw" in df_today.columns else 0.0
+    pv_total_kwh = float(df_today["pv_power_gen_kw"].sum()) if "pv_power_gen_kw" in df_today.columns else 0.0
+    pv_peak_h = int(df_today.loc[df_today["pv_power_gen_kw"].idxmax(), "hour"]) if pv_peak_kw > 0 and "pv_power_gen_kw" in df_today.columns else None
+    avg_consumption_kw = float(df_today["power_consumption_kw"].dropna().mean()) if "power_consumption_kw" in df_today.columns else 0.0
 
-    low_hours = sorted(df_today[df_today["pvp_class"] == "low"]["hour"].tolist())
-    high_hours = sorted(df_today[df_today["pvp_class"] == "high"]["hour"].tolist())
-    solar_hours = sorted(df_today[df_today["pvp_class"] == "solar"]["hour"].tolist())
-    mid_hours = sorted(df_today[df_today["pvp_class"] == "mid"]["hour"].tolist())
+    # Horas donde FV cubre o supera consumo
+    hourly_data = []
+    fv_cover_hours = []
+    total_excess_fv = 0.0
+    for _, row in df_today.sort_values("hour").iterrows():
+        h = int(row["hour"])
+        pv = float(row.get("pv_power_gen_kw", 0))
+        cons = float(row.get("power_consumption_kw", 0)) if pd.notna(row.get("power_consumption_kw")) else None
+        pvp = float(row.get("price_pvpc_eur_mwh", 0)) if pd.notna(row.get("price_pvpc_eur_mwh")) else None
 
-    # Contexto de mercado: caracterizar el día
-    if pvp_spread > 120:
-        market_profile = "día de ALTA VOLATILIDAD — diferencial extremo entre valle y pico"
-    elif pvp_spread > 60:
-        market_profile = "día de volatilidad moderada-alta — oportunidades claras de desplazamiento"
-    elif pvp_spread > 30:
-        market_profile = "día de volatilidad moderada — ahorro posible con desplazamiento selectivo"
+        net_import = max(0.0, cons - pv) if cons is not None else None
+        fv_covers = pv >= cons if cons is not None else False
+        excess = max(0.0, pv - cons) if fv_covers else 0.0
+        total_excess_fv += excess
+        if fv_covers:
+            fv_cover_hours.append(h)
+
+        hourly_data.append({
+            "hour": h,
+            "pv_kw": round(pv, 1),
+            "consumption_kw": round(cons, 1) if cons else None,
+            "net_import_kw": round(net_import, 1) if net_import is not None else None,
+            "fv_covers": fv_covers,
+            "excess_fv_kw": round(excess, 1),
+            "pvp_eur_mwh": round(pvp, 2) if pvp and has_real_pvp else None
+        })
+
+    # Clasificación por FV (sin PVP)
+    if not has_real_pvp:
+        low_hours = sorted([h["hour"] for h in hourly_data if h["pv_kw"] > pv_peak_kw * 0.5]) if pv_peak_kw > 0 else []
+        mid_hours = sorted([h["hour"] for h in hourly_data if 0 < h["pv_kw"] <= pv_peak_kw * 0.5]) if pv_peak_kw > 0 else []
+        high_hours = sorted([h["hour"] for h in hourly_data if h["pv_kw"] == 0])
+        solar_hours = sorted([h["hour"] for h in hourly_data if h["pv_kw"] > 1.0])
     else:
-        market_profile = "día de precios planos — ahorro marginal, priorizar confort operativo"
+        low_hours = sorted(df_today[df_today["pvp_class"] == "low"]["hour"].tolist()) if "pvp_class" in df_today.columns else []
+        high_hours = sorted(df_today[df_today["pvp_class"] == "high"]["hour"].tolist()) if "pvp_class" in df_today.columns else []
+        solar_hours = sorted(df_today[df_today["pvp_class"] == "solar"]["hour"].tolist()) if "pvp_class" in df_today.columns else []
+        mid_hours = sorted(df_today[df_today["pvp_class"] == "mid"]["hour"].tolist()) if "pvp_class" in df_today.columns else []
 
-    # Caracterizar la generación FV
-    if pv_peak_kw >= 8:
-        solar_profile = f"generación FV significativa ({pv_peak_kw:.1f} kW pico) — {len(solar_hours)} horas activas"
-    elif pv_peak_kw >= 2:
-        solar_profile = f"generación FV moderada ({pv_peak_kw:.1f} kW pico) — apoyo parcial al autoconsumo"
-    else:
-        solar_profile = "generación FV mínima o nula — decisiones basadas solo en precio de red"
+    # ────────────────────────────────────────────────────────────
+    # RAZONAMIENTO PRECARGADO POR ACTIVO
+    # La IA no inventa, solo completa el JSON con los datos ya calculados
+    # ────────────────────────────────────────────────────────────
+    asset_decisions = []
 
-    # Calcular per-asset window prices for better reasoning
-    assets_with_context = []
     for _, asset in df_assets.iterrows():
+        asset_id = asset["asset_id"]
+        asset_name = asset["asset_name"]
+        asset_type = asset["asset_type"]
         power_kw = _safe_float(asset["power_kw"], 0.0)
         cap_kwh = _safe_float(asset.get("capacity_kwh"), 0.0)
         ws = int(_safe_float(asset["flex_window_start"], 0))
         we = int(_safe_float(asset["flex_window_end"], 23))
+        is_flex = bool(asset["is_flexible"] == 1)
+        notes = asset.get("notes", "")
+        priority = int(_safe_float(asset["priority"], 99))
 
-        hours_needed = None
-        if asset["asset_type"] == "forklift_battery" and cap_kwh > 0 and power_kw > 0:
-            hours_needed = math.ceil(cap_kwh / power_kw)
-
-        # Precio medio y mínimo dentro de la ventana
         window_hours = _all_hours_in_window(ws, we)
         window_df = df_today[df_today["hour"].isin(window_hours)]
-        window_pvp = window_df["price_pvpc_eur_mwh"].dropna()
-        window_pvp_avg = round(float(window_pvp.mean()), 1) if not window_pvp.empty and has_pvp else None
-        window_pvp_min = round(float(window_pvp.min()), 1) if not window_pvp.empty and has_pvp else None
-        window_pvp_max = round(float(window_pvp.max()), 1) if not window_pvp.empty and has_pvp else None
-        low_in_window = sorted(window_df[window_df["pvp_class"] == "low"]["hour"].tolist()) if has_pvp else []
-        solar_in_window = sorted(window_df[window_df["pvp_class"] == "solar"]["hour"].tolist())
 
-        assets_with_context.append({
-            "asset_id": asset["asset_id"],
-            "asset_name": asset["asset_name"],
-            "asset_type": asset["asset_type"],
-            "power_kw": power_kw,
-            "capacity_kwh": cap_kwh if cap_kwh > 0 else None,
-            "hours_needed_for_charge": hours_needed,
-            "is_flexible": bool(asset["is_flexible"] == 1),
-            "flex_window_start": ws,
-            "flex_window_end": we,
-            "is_overnight_window": ws > we,
-            "priority": int(_safe_float(asset["priority"], 99)),
-            "notes": asset.get("notes", ""),
-            "has_capacity": bool(_safe_float(asset.get("has_capacity"), 0) == 1),
-            "is_overnight_flexible": bool(_safe_float(asset.get("is_overnight_flexible"), 0) == 1),
-            "window_context": {
-                "pvp_avg_eur_mwh": window_pvp_avg,
-                "pvp_min_eur_mwh": window_pvp_min,
-                "pvp_max_eur_mwh": window_pvp_max,
-                "low_hours_in_window": low_in_window,
-                "solar_hours_in_window": solar_in_window,
-                "n_hours_low_in_window": len(low_in_window),
-                "n_hours_solar_in_window": len(solar_in_window),
-            }
+        # Datos FV de la ventana
+        window_pv = window_df["pv_power_gen_kw"] if "pv_power_gen_kw" in window_df.columns else pd.Series([0.0]*len(window_df))
+        window_pv_max = float(window_pv.max()) if not window_pv.empty else 0.0
+        window_pv_total = float(window_pv.sum()) if not window_pv.empty else 0.0
+        window_pv_peak_h = int(window_pv.idxmax()) if not window_pv.empty and window_pv.max() > 0 else None
+
+        # Horas con/sin FV en ventana
+        solar_in_window = sorted(window_df[window_df["pv_power_gen_kw"] > 1.0]["hour"].tolist()) if "pv_power_gen_kw" in window_df.columns else []
+        no_fv_in_window = sorted(window_df[window_df["pv_power_gen_kw"] == 0]["hour"].tolist()) if "pv_power_gen_kw" in window_df.columns else []
+        high_fv_in_window = sorted(window_df[window_df["pv_power_gen_kw"] > pv_peak_kw * 0.5]["hour"].tolist()) if pv_peak_kw > 0 and "pv_power_gen_kw" in window_df.columns else []
+
+        # Cálculo del bloque óptimo
+        hours_needed = None
+        if asset_type in ["forklift_battery", "ev_charging_station"] and cap_kwh > 0 and power_kw > 0:
+            hours_needed = math.ceil(cap_kwh / power_kw)
+
+        optimal_block = None
+        optimal_block_fv_total = 0.0
+        optimal_block_fv_pct = 0.0
+
+        if hours_needed and hours_needed > 0 and len(window_hours) >= hours_needed:
+            if has_real_pvp:
+                # Bloque con menor precio medio
+                best_avg = float('inf')
+                for i in range(len(window_hours) - hours_needed + 1):
+                    block = window_hours[i:i + hours_needed]
+                    block_pvp = df_today[df_today["hour"].isin(block)]["price_pvpc_eur_mwh"].dropna()
+                    if not block_pvp.empty:
+                        block_avg = float(block_pvp.mean())
+                        if block_avg < best_avg:
+                            best_avg = block_avg
+                            optimal_block = block
+            else:
+                # Bloque con mayor FV acumulada
+                best_fv = float('-inf')
+                for i in range(len(window_hours) - hours_needed + 1):
+                    block = window_hours[i:i + hours_needed]
+                    block_fv = df_today[df_today["hour"].isin(block)]["pv_power_gen_kw"].sum()
+                    if block_fv > best_fv:
+                        best_fv = block_fv
+                        optimal_block = block
+                if optimal_block:
+                    optimal_block_fv_total = round(best_fv, 1)
+                    demand_total = power_kw * hours_needed
+                    optimal_block_fv_pct = round(min(100.0, best_fv / demand_total * 100), 1) if demand_total > 0 else 0.0
+
+        # ─── Determinar time_window, action, reason, saving ───
+
+        if asset_type == "forklift_battery" and is_flex:
+            if optimal_block:
+                tw = f"{optimal_block[0]:02d}h–{optimal_block[-1]+1:02d}h"
+                action = f"Programar carga {tw}"
+                if not has_real_pvp:
+                    if optimal_block_fv_pct >= 80:
+                        reason = f"El bloque óptimo de {hours_needed} horas con mayor FV acumulada es {tw}. La FV cubre el {optimal_block_fv_pct}% de la carga de {power_kw} kW, permitiendo autoconsumo casi total. Cargar fuera de este bloque importaría toda la energía de la red."
+                        saving = round(power_kw * hours_needed * 0.12 * (optimal_block_fv_pct / 100) / 1000, 2)
+                        tag = f"Autoconsumo ~{optimal_block_fv_total:.1f} kWh → ahorro ~{saving:.2f} €"
+                    elif optimal_block_fv_pct > 0:
+                        reason = f"El bloque óptimo {tw} acumula {optimal_block_fv_total:.1f} kWh de FV, cubriendo el {optimal_block_fv_pct}% de la carga de {power_kw} kW. El resto se importa de la red. Cargar en horas sin FV sería 100% importado."
+                        saving = round(power_kw * hours_needed * 0.12 * (optimal_block_fv_pct / 100) / 1000, 2)
+                        tag = f"Autoconsumo parcial ~{optimal_block_fv_total:.1f} kWh → ahorro ~{saving:.2f} €"
+                    else:
+                        reason = f"La ventana {ws:02d}h–{we:02d}h no incluye generación FV. El bloque óptimo {tw} se importa íntegramente de la red. Se programa por necesidad operativa, no por ahorro."
+                        saving = 0.0
+                        tag = "Sin FV en ventana — decisión operativa"
+                else:
+                    # Con PVP real
+                    window_pvp = window_df["price_pvpc_eur_mwh"].dropna()
+                    window_avg = float(window_pvp.mean()) if not window_pvp.empty else 0.0
+                    block_pvp = df_today[df_today["hour"].isin(optimal_block)]["price_pvpc_eur_mwh"].dropna()
+                    block_avg = float(block_pvp.mean()) if not block_pvp.empty else window_avg
+                    saving = round(power_kw * hours_needed * (window_avg - block_avg) / 1000, 2) if window_avg > block_avg else 0.0
+                    reason = f"El bloque óptimo {tw} tiene precio medio {block_avg:.1f} €/MWh, {window_avg - block_avg:.1f} €/MWh por debajo de la media de la ventana. Cargar la batería de {power_kw} kW durante {hours_needed} horas ahorra {saving:.2f} € vs el peor momento."
+                    tag = f"Evitas ~{saving:.2f} € vs cargar en pico"
+                urgency = "critical"
+            else:
+                tw = f"{ws:02d}h–{we:02d}h"
+                action = f"Programar carga en ventana {tw}"
+                reason = f"No se ha podido determinar un bloque óptimo contiguo de {hours_needed} horas dentro de la ventana {tw}. Se recomienda revisar la ventana flexible del activo."
+                saving = 0.0
+                tag = "Revisar ventana — bloque no encaja"
+                urgency = "critical"
+
+        elif asset_type == "cold_storage" and is_flex:
+            if solar_in_window and not has_real_pvp:
+                # Hay FV en la ventana → pre-enfriar en horas de FV
+                best_fv_h = solar_in_window[-1] if solar_in_window else ws
+                tw = f"{ws:02d}h–{best_fv_h+1:02d}h" if best_fv_h != ws else f"{ws:02d}h–{we:02d}h"
+                action = f"Pre-enfriar 1-2°C {tw}"
+                reason = f"La ventana incluye {len(solar_in_window)} horas de FV, con pico de {window_pv_max:.1f} kW a las {window_pv_peak_h:02d}h. Pre-enfriar durante estas horas acumula inercia térmica para {len(no_fv_in_window)} horas sin FV, evitando arranques del compresor cuando el consumo total es máximo."
+                saving = round(power_kw * 3 * 0.12 * (window_pv_total / (power_kw * len(window_hours)) if power_kw > 0 else 0) / 1000, 2)
+                tag = f"Reducción importación ~{saving:.2f} €"
+                urgency = "high"
+            else:
+                # Sin FV en ventana → pre-enfriar nocturno para inercia diurna
+                tw = f"{ws:02d}h–{we:02d}h"
+                action = f"Pre-enfriar 1-2°C {tw}"
+                reason = f"La ventana {tw} no incluye generación FV. El pre-enfriado nocturno acumula inercia térmica para 2-3 horas sin compresor activo. Durante el día, la FV pico de {pv_peak_kw:.1f} kW cubre el consumo y la inercia evita arranques adicionales."
+                saving = 0.0
+                tag = "Sin FV en ventana — inercia térmica"
+                urgency = "high"
+
+        elif asset_type == "compressor" and is_flex:
+            if solar_in_window and not has_real_pvp:
+                best_h = window_pv_peak_h if window_pv_peak_h and window_pv_peak_h in window_hours else solar_in_window[0]
+                tw = f"{best_h:02d}h–{best_h+2:02d}h"
+                action = f"Arrancar compresor {tw}"
+                reason = f"Arrancar a las {best_h:02d}h coincide con {window_pv_max:.1f} kW de FV pico en la ventana, absorbiendo el pico de arranque de {power_kw * 6:.1f} kW (6× nominal) en autoconsumo. Operar fuera de esta franja importaría todo el pico de la red."
+                saving = round(power_kw * 2 * 0.12 * min(1.0, window_pv_max / power_kw if power_kw > 0 else 0) / 1000, 2)
+                tag = f"Evita pico importación ~{saving:.2f} €"
+                urgency = "medium"
+            else:
+                tw = f"{ws:02d}h–{we:02d}h"
+                action = f"Operar compresor {tw}"
+                reason = f"La ventana {tw} no incluye FV. El arranque del compresor de {power_kw} kW se importa íntegramente de la red. Programar mantenimiento (purga, filtros) en esta franja para concentrar el consumo en horas controladas."
+                saving = 0.0
+                tag = "Sin FV — decisión operativa"
+                urgency = "medium"
+
+        elif asset_type == "pump" and is_flex:
+            if solar_in_window and not has_real_pvp:
+                best_h = solar_in_window[0] if solar_in_window else ws
+                tw = f"{best_h:02d}h–{best_h+3:02d}h"
+                action = f"Llenar depósito {tw}"
+                autonomia = math.ceil(cap_kwh / power_kw) if cap_kwh > 0 and power_kw > 0 else 4
+                reason = f"Llenar entre {tw} aprovecha {window_pv_max:.1f} kW de FV disponible. El depósito acumula {autonomia} horas de autonomía hidráulica, evitando bombear en horas sin FV cuando todo se importaría."
+                saving = round(power_kw * 3 * 0.12 * min(1.0, window_pv_total / (power_kw * 3) if power_kw > 0 else 0) / 1000, 2)
+                tag = f"Autoconsumo ~{saving:.2f} €"
+                urgency = "medium"
+            else:
+                tw = f"{ws:02d}h–{we:02d}h"
+                action = f"Llenar depósito {tw}"
+                reason = f"La ventana {tw} no incluye FV. El llenado del depósito se importa de la red. Se programa por necesidad operativa; el depósito actúa como batería hidráulica para horas sin bombeo."
+                saving = 0.0
+                tag = "Sin FV — decisión operativa"
+                urgency = "medium"
+
+        elif asset_type == "lighting" and is_flex:
+            if solar_in_window and not has_real_pvp:
+                tw = f"{solar_in_window[0]:02d}h–{solar_in_window[-1]+1:02d}h"
+                action = f"Programar encendido {tw}"
+                reason = f"La ventana incluye {len(solar_in_window)} horas de FV activa. Encender durante estas horas aprovecha la generación solar. En horas sin FV, reducir al 70% si el sistema tiene dimmer."
+                saving = round(power_kw * len(solar_in_window) * 0.12 * 0.5 / 1000, 2)
+                tag = f"Ahorro potencial ~{saving:.2f} €"
+                urgency = "low"
+            else:
+                tw = f"{ws:02d}h–{we:02d}h"
+                action = f"Apagar 30% zonas no productivas {tw}"
+                reason = f"La ventana {tw} no incluye FV. Apagar 30% de zonas no productivas reduce la importación neta. Solo aplicar si el ahorro supera 0.05 €."
+                saving = round(power_kw * 0.3 * len(window_hours) * 0.12 / 1000, 2)
+                tag = f"Reducción importación ~{saving:.2f} €"
+                urgency = "low"
+
+        elif not is_flex:
+            tw = f"{ws:02d}h–{we:02d}h"
+            action = f"Monitorizar consumo {tw}"
+            pct_total = round(power_kw / (avg_consumption_kw if avg_consumption_kw > 0 else 1) * 100, 1)
+            if not has_real_pvp:
+                reason = f"Activo no flexible de {power_kw} kW opera en horario fijo. En horas sin FV, importa {power_kw} kW de la red. Representa el {pct_total}% del consumo total de la planta."
+                saving = 0.0
+                tag = "Alerta — sin ahorro directo"
+            else:
+                window_pvp = window_df["price_pvpc_eur_mwh"].dropna()
+                avg_pvp = float(window_pvp.mean()) if not window_pvp.empty else 0.0
+                coste = round(power_kw * len(window_hours) * avg_pvp / 1000, 2)
+                reason = f"Activo no flexible de {power_kw} kW. Coste estimado en la ventana: {coste:.2f} €. Representa el {pct_total}% de la demanda total."
+                saving = 0.0
+                tag = f"Alerta pico — coste ~{coste:.2f} €"
+            urgency = "low"
+
+        else:
+            # Otros activos flexibles
+            tw = f"{ws:02d}h–{we:02d}h"
+            action = f"Optimizar horario {tw}"
+            if solar_in_window and not has_real_pvp:
+                reason = f"La ventana incluye {len(solar_in_window)} horas de FV. Programar operación durante estas horas para maximizar autoconsumo."
+                saving = round(power_kw * len(solar_in_window) * 0.12 * 0.3 / 1000, 2)
+                tag = f"Autoconsumo ~{saving:.2f} €"
+            else:
+                reason = f"La ventana {tw} no incluye FV. La operación se importa de la red. Programar por necesidad operativa."
+                saving = 0.0
+                tag = "Sin FV — decisión operativa"
+            urgency = "medium"
+
+        asset_decisions.append({
+            "asset_id": asset_id,
+            "asset_name": asset_name,
+            "asset_type": asset_type,
+            "priority": priority,
+            "time_window": tw,
+            "action": action,
+            "reason": reason,
+            "saving_tag": tag,
+            "saving_eur": saving,
+            "urgency": urgency,
+            "flex_window_label": f"{ws:02d}h–{we:02d}h"
         })
 
-    hourly_data = []
-    for _, row in df_today.sort_values("hour").iterrows():
-        pvp_val = round(float(row["price_pvpc_eur_mwh"]), 2) if pd.notna(row["price_pvpc_eur_mwh"]) else None
-        consumption_val = round(float(row["power_consumption_kw"]), 2) if pd.notna(row["power_consumption_kw"]) else None
-        net_import_kw = None
-        if consumption_val is not None:
-            pv_val = round(float(row["pv_power_gen_kw"]), 2)
-            net_import_kw = round(max(0.0, consumption_val - pv_val), 2)
-        hourly_data.append({
-            "hour": int(row["hour"]),
-            "pvp_eur_mwh": pvp_val,
-            "pv_gen_kw": round(float(row["pv_power_gen_kw"]), 2),
-            "consumption_kw": consumption_val,
-            "net_import_kw": net_import_kw,
-            "class": row["pvp_class"]
-        })
+    # ────────────────────────────────────────────────────────────
+    # CONSTRUIR EL PROMPT FINAL
+    # ────────────────────────────────────────────────────────────
 
+    target_date_str = str(df_today["date"].iloc[0]) if "date" in df_today.columns else "desconocida"
+
+    decisions_json = json.dumps(asset_decisions, indent=2, ensure_ascii=False)
     hourly_json = json.dumps(hourly_data, indent=2, ensure_ascii=False)
-    assets_json = json.dumps(assets_with_context, indent=2, ensure_ascii=False)
-
-    target_date_str = str(df_today["date"].iloc[0])
-    tz_str = str(df_today["forecast_time_local"].iloc[0].tzname()) if len(df_today) > 0 else "Europe/Madrid"
-
-    # Calcular total potencia flexible vs no flexible para contexto
-    flex_assets = df_assets[df_assets["is_flexible"] == 1]
-    noflex_assets = df_assets[df_assets["is_flexible"] == 0]
-    flex_kw = flex_assets["power_kw"].apply(lambda v: _safe_float(v, 0.0)).sum()
-    noflex_kw = noflex_assets["power_kw"].apply(lambda v: _safe_float(v, 0.0)).sum()
-    flexibility_ratio = round(flex_kw / (flex_kw + noflex_kw) * 100, 0) if (flex_kw + noflex_kw) > 0 else 0.0
 
     lines = [
         "## CONTEXTO DEL DÍA",
         "",
-        f"Fecha: {target_date_str}  |  Zona horaria: {tz_str}",
-        f"Perfil de mercado: {market_profile}",
-        f"Perfil solar: {solar_profile}",
-        f"Ratio FV/consumo en pico: {pv_to_consumption_ratio:.1f}% (la fábrica importa el resto de la red)",
+        f"Fecha: {target_date_str}",
+        f"PVP disponible: {'SÍ — datos reales' if has_real_pvp else 'NO — sin datos de mercado'}",
+        f"FV pico: {pv_peak_kw:.1f} kW a las {pv_peak_h:02d}h" if pv_peak_h else "FV pico: 0 kW",
+        f"FV total: {pv_total_kwh:.1f} kWh",
+        f"Consumo basal medio: {avg_consumption_kw:.1f} kW",
+        f"Horas donde FV cubre consumo: {fv_cover_hours}",
+        f"Exceso FV acumulado: {total_excess_fv:.1f} kWh",
         "",
-        "## ESTADÍSTICAS DE PRECIO (PVPC)",
-        "",
-        f"  Mínimo  : {pvp_min:.1f} €/MWh",
-        f"  Máximo  : {pvp_max:.1f} €/MWh",
-        f"  Medio   : {pvp_avg:.1f} €/MWh",
-        f"  Mediana : {pvp_median:.1f} €/MWh",
-        f"  Spread  : {pvp_spread:.1f} €/MWh (diferencial valle–pico)",
-        f"  PVP disponible: {'Sí — datos OMIE confirmados' if has_pvp else 'No — usar estimación'}",
-        "",
-        "## ESTRUCTURA HORARIA",
-        "",
-        f"  Horas baratas  (< 80 €/MWh) : {_fmt_list(low_hours) if low_hours else 'ninguna'}",
-        f"  Horas medianas (80–150 €/MWh): {_fmt_list(mid_hours) if mid_hours else 'ninguna'}",
-        f"  Horas caras    (> 150 €/MWh) : {_fmt_list(high_hours) if high_hours else 'ninguna'}",
-        f"  Horas solar activa (FV > 1kW): {_fmt_list(solar_hours) if solar_hours else 'ninguna'}",
-        f"  Pico FV: {pv_peak_kw:.1f} kW a las {pv_peak_h:02d}h" if pv_peak_h is not None else "  Pico FV: 0 kW (sin generación)",
-        f"  FV total estimada: {pv_total_kwh:.1f} kWh",
-        "",
-        "## PERFIL DE ACTIVOS",
-        "",
-        f"  Potencia flexible   : {flex_kw:.1f} kW ({flexibility_ratio:.0f}% del total)",
-        f"  Potencia no flexible: {noflex_kw:.1f} kW",
-        f"  Total activos       : {len(df_assets)} ({len(flex_assets)} flexibles, {len(noflex_assets)} no flexibles)",
-        "",
-        "## DATOS HORA A HORA (con net_import_kw = consumo − FV)",
-        "",
+        "## DATOS HORA A HORA",
         "```json",
         hourly_json,
         "```",
         "",
-        "## ACTIVOS A OPTIMIZAR",
-        "(Cada activo incluye window_context con estadísticas de precio dentro de su ventana)",
+        "## DECISIONES YA CALCULADAS POR ACTIVO",
+        "El siguiente JSON contiene el razonamiento completo para cada activo.",
+        "TU TAREA: devolver EXACTAMENTE estos datos en el formato JSON requerido.",
+        "NO modifiques los time_window, NO inventes precios, NO cambies las razones.",
+        "Solo asegúrate de que el formato sea válido JSON con la lista 'decisions'.",
         "",
         "```json",
-        assets_json,
+        decisions_json,
         "```",
         "",
-        "## INSTRUCCIÓN PARA EL AGENTE",
+        "## FORMATO DE SALIDA REQUERIDO",
         "",
-        "Genera UNA decisión por activo, siguiendo estas prioridades:",
+        "Devuelve SOLO un JSON con esta estructura:",
         "",
-        "1. FORKLIFT BATTERY (critical): bloque contiguo de N horas más baratas en su ventana.",
-        "   → Usa hours_needed_for_charge. Compara coste bloque óptimo vs peor bloque de la ventana.",
+        "{",
+        '  "decisions": [',
+        "    {",
+        '      "asset_id": "string",',
+        '      "asset_name": "string",',
+        '      "asset_type": "string",',
+        '      "priority": int,',
+        '      "time_window": "HHh–HHh",',
+        '      "action": "string",',
+        '      "reason": "string",',
+        '      "saving_tag": "string",',
+        '      "saving_eur": float,',
+        '      "urgency": "critical|high|medium|low",',
+        '      "flex_window_label": "HHh–HHh"',
+        "    }",
+        "  ]",
+        "}",
         "",
-        "2. COLD STORAGE (high): pull-down en horas baratas/solares de la ventana.",
-        "   → Si notes indica restricción de temperatura, advierte del riesgo de no actuar.",
-        "   → Estima inercia: 'acumula X horas sin compresor activo'.",
-        "",
-        "3. AUTOCLAVE (high): inicio de ciclo para completar antes del primer pico.",
-        "   → Si is_flexible=false, genera alerta de coste, no de desplazamiento.",
-        "",
-        "4. COMPRESSOR / PUMP (medium): arranque en horas baratas de su ventana.",
-        "   → Menciona pico de corriente de arranque si es relevante.",
-        "",
-        "5. LIGHTING (low): solo si hay horas high y saving_eur >= 0.05 €.",
-        "   → Si flexible: programar encendido en horas baratas.",
-        "   → Si no flexible + dimmer en notes: propón reducción al 70% en horas high.",
-        "",
-        "6. OTROS NO FLEXIBLES (low): alerta si coinciden con horas high.",
-        "   → Cuantifica coste en esas horas y % sobre demanda total.",
-        "",
-        "IMPORTANTE: el campo 'reason' de cada decisión debe tener estructura de apertura",
-        "diferente a las demás decisiones del mismo informe. Usa los datos de window_context",
-        "para hacer el reason más preciso (precio medio de la ventana, horas baratas en ventana).",
-        "",
-        "Devuelve ÚNICAMENTE el JSON con la lista de decisions.",
+        "REGLAS:",
+        "• Usa EXACTAMENTE los time_window, action, reason, saving_tag, saving_eur, urgency del JSON anterior.",
+        "• NO añadas texto explicativo fuera del JSON.",
+        "• NO modifiques las razones. Ya están calculadas correctamente.",
+        "• Si has_pvp=false en el contexto: NO uses €/MWh en ningún campo.",
     ]
 
     return "\n".join(lines)
