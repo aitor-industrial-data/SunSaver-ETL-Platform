@@ -1,49 +1,57 @@
+Readme · MD
 # ☀️ SunSaver ETL Platform
-
+ 
 > Plataforma de previsión de generación solar y optimización energética para industria.  
 > Pipeline serverless en AWS que convierte datos de mercado eléctrico y meteorología  
 > en un **plan de acción operativo** listo cada mañana antes de que arranque el turno.
-
+ 
 <br>
-
-[![AWS Fargate](https://img.shields.io/badge/AWS-Fargate-FF9900?logo=amazonaws&logoColor=white)](https://aws.amazon.com/fargate/)
-[![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](https://python.org)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15-336791?logo=postgresql&logoColor=white)](https://aws.amazon.com/rds/)
-[![pvlib](https://img.shields.io/badge/pvlib-0.15-F5A623?logo=python&logoColor=white)](https://pvlib-python.readthedocs.io/)
-[![CI/CD](https://img.shields.io/badge/CI/CD-GitHub_Actions_→_ECR_→_ECS-2088FF?logo=githubactions&logoColor=white)](https://github.com/aitor-industrial-data/SunSaver-ETL-Platform/actions)
+<table><tr><td align="center">
+[![AWS Fargate](https://img.shields.io/badge/AWS-Fargate-FF9900?style=flat-square&logo=amazonaws&logoColor=white)](https://aws.amazon.com/fargate/)
+ 
+</td><td align="center">
+[![Python](https://img.shields.io/badge/Python-3.12-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
+ 
+</td><td align="center">
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15-336791?style=flat-square&logo=postgresql&logoColor=white)](https://aws.amazon.com/rds/)
+ 
+</td><td align="center">
+[![pvlib](https://img.shields.io/badge/pvlib-0.15-F5A623?style=flat-square&logo=python&logoColor=white)](https://pvlib-python.readthedocs.io/)
+ 
+</td><td align="center">
+[![CI/CD](https://img.shields.io/badge/CI%2FCD-Actions%20%E2%86%92%20ECR%20%E2%86%92%20ECS-2088FF?style=flat-square&logo=githubactions&logoColor=white)](https://github.com/aitor-industrial-data/SunSaver-ETL-Platform/actions)
+ 
+</td></tr></table>
 ---
-
+ 
 ## Ver el informe en vivo
-
+ 
 El resultado tangible del pipeline: un **plan de accción diario** con decisiones concretas para la planta.
-
+ 
 <div>
-
 <a href="https://sunsaver-bronze.s3.eu-south-2.amazonaws.com/reports/latest.html">
   <img src="https://img.shields.io/badge/🔗_Ver estrategia energética de hoy_→-A2E865?style=for-the-badge" alt="Ver informe live" height="48">
 </a>
-
 *Actualizado cada noche tras la ejecución del pipeline (~21:05 h)*
-
+ 
 </div>
-
 ---
-
+ 
 ## El problema que resuelve
-
+ 
 Una instalación fotovoltaica industrial genera datos que por sí solos no sirven para tomar decisiones. El precio de la electricidad cambia cada hora, la generación solar depende de la posición exacta del sol y de la temperatura real del panel, y el responsable de planta necesita saber **qué hacer mañana a las 7h**, no leer tablas en crudo.
-
+ 
 **SunSaver cierra ese gap.** Cada noche a las 21h —cuando ESIOS publica los precios PVPC del día siguiente— el pipeline se ejecuta automáticamente y entrega un informe accionable: cuándo cargar las carretillas, cuándo no arrancar compresores, cuándo aprovechar el excedente solar, etc.
-
+ 
 ```
 20:30 h  →  ESIOS publica precios PVPC D+1
 21:00 h  →  SunSaver ejecuta pipeline completo  (~3 min en Fargate)
 21:05 h  →  Informe HTML publicado en URL fija de S3
 06:00 h  →  El jefe de planta abre el informe antes del primer turno
 ```
-
+ 
 ---
-
+ 
 ## Qué hace el sistema
  
 ```

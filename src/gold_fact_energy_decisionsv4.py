@@ -1,3 +1,30 @@
+"""
+gold_fact_energy_decisions_v2.py
+────────────────────────────────
+Motor de decisiones energéticas — versión 2.1
+
+BUGS CORREGIDOS RESPECTO A v2.0:
+  ① cap_kwh NULL → hours_needed=0 → lista vacía → carretilla/cold_storage/pump
+     nunca generaban decisión. Corregido: fallback a 4h si cap_kwh es NULL o 0.
+  ② solar_hours se clasificaban SOLO como "solar", nunca como "low", aunque a
+     mediodía el PVP fuera bajo. La lógica de cold_storage/pump buscaba solar_hours
+     en la ventana pero si la ventana era nocturna (ej. 00h–07h) nunca encontraba
+     nada y caía al fallback. Corregido: separamos concepto de ventana solar FV
+     (para autoconsumo) del concepto de hora barata por precio.
+  ③ MIN_WINDOW_ADVANTAGE_PCT=8% demasiado restrictivo en días con precio flat y bajo:
+     si pvp_avg=75 €/MWh y la ventana va a 60 €/MWh, la ventaja es 20% → OK.
+     Pero si pvp_avg=55 €/MWh (día muy barato) y ventana a 45 €/MWh → 18% → OK.
+     El problema era que si todas las horas son baratas (pvp_avg≈pvp_ventana) no
+     hay ventaja relativa aunque el ahorro absoluto sea real. Corregido: usamos
+     ahorro absoluto en € como criterio principal, no % relativo.
+  ④ _best_n_hours_cheap no garantizaba contigüidad. Para carretilla se requieren
+     horas seguidas (el cargador no se puede interrumpir). Corregido: función
+     _best_consecutive_block que encuentra el bloque contiguo más barato de N horas.
+  ⑤ Activos flexibles con is_flexible=1 pero con asset_type no contemplado en el
+     motor caían al bloque "not flexible" y generaban alertas de pico incorrectas.
+     Corregido: bloque else final solo aplica a is_flexible=0.
+"""
+
 from __future__ import annotations
 
 import math
@@ -27,14 +54,6 @@ MIN_SAVING_EUR = 0.05
 
 # Horas de carga por defecto si cap_kwh o power_kw son NULL en DB
 DEFAULT_CHARGE_HOURS = 4
-
-# ── MODO HONESTO SIN PVP ──────────────────────────────────────────────────────
-# Cuando True y no hay datos PVP, el sistema:
-#   - No inventa precios (no fallback a 100 €/MWh)
-#   - Reporta explícitamente que opera sin datos de mercado
-#   - Usa solo FV vs consumo para decisiones
-#   - Ahorro estimado = 0 € (no se puede calcular sin precio de referencia)
-HONEST_MODE_NO_PVP = True
 
 
 # ── EXTRACT ───────────────────────────────────────────────────────────────────
@@ -325,28 +344,9 @@ def _build_decisions(df_today: pd.DataFrame, df_assets: pd.DataFrame) -> list[di
         return decisions
 
     has_pvp    = df_today["has_pvp"].any()
-
-    # ── MODO HONESTO SIN PVP ──────────────────────────────────────────────
-    # Si no hay datos PVP y HONEST_MODE_NO_PVP está activo, no inventamos precios.
-    # pvp_avg, pvp_min, pvp_max se dejan como None para evitar cálculos falsos.
-    # El ahorro se reporta como 0 € porque no hay referencia de precio.
-    # Las decisiones se basan únicamente en FV vs consumo.
-    # ──────────────────────────────────────────────────────────────────────
-    if has_pvp:
-        pvp_avg    = df_today["price_pvpc_eur_mwh"].dropna().mean()
-        pvp_min    = df_today["price_pvpc_eur_mwh"].min()
-        pvp_max    = df_today["price_pvpc_eur_mwh"].max()
-    elif HONEST_MODE_NO_PVP:
-        pvp_avg    = None
-        pvp_min    = None
-        pvp_max    = None
-        logger.warning("[MOTOR] Sin datos PVP — activando modo honesto. No se calculan ahorros en €.")
-    else:
-        # Fallback legacy (comportamiento anterior — inventa precios)
-        pvp_avg    = 100.0
-        pvp_min    = 0.0
-        pvp_max    = 200.0
-
+    pvp_avg    = df_today["price_pvpc_eur_mwh"].dropna().mean() if has_pvp else 100.0
+    pvp_min    = df_today["price_pvpc_eur_mwh"].min()           if has_pvp else 0.0
+    pvp_max    = df_today["price_pvpc_eur_mwh"].max()           if has_pvp else 200.0
     pv_peak_kw = df_today["pv_power_gen_kw"].max()
     pv_peak_h  = int(df_today.loc[df_today["pv_power_gen_kw"].idxmax(), "hour"])
 
@@ -367,7 +367,7 @@ def _build_decisions(df_today: pd.DataFrame, df_assets: pd.DataFrame) -> list[di
     cheap_hours = low_hours  # solo precio de red < 80 €/MWh
 
     logger.debug(
-        "[MOTOR] pvp_avg=%s low=%s high=%s solar=%s cheap=%s",
+        "[MOTOR] pvp_avg=%.0f low=%s high=%s solar=%s cheap=%s",
         pvp_avg, low_hours, high_hours, solar_hours, cheap_hours
     )
 
@@ -414,51 +414,30 @@ def _build_decisions(df_today: pd.DataFrame, df_assets: pd.DataFrame) -> list[di
                 logger.warning("[%s] No se encontró bloque de carga válido — SKIP", name)
                 continue
 
-            # ── MODO HONESTO SIN PVP ──────────────────────────────────────
-            # Si no hay PVP, no calculamos ahorro en €. Usamos FV como proxy.
-            # El mensaje indica explícitamente que no hay datos de precio.
-            # ──────────────────────────────────────────────────────────────
-            if has_pvp:
-                saving = _estimate_saving_eur(power_kw, opt_hours, df_today, _window_avg_pvp(df_today, window_all))
-                win_pvp_avg  = df_today[df_today["hour"].isin(opt_hours)]["price_pvpc_eur_mwh"].mean()
-                win_pvp_str  = f"{win_pvp_avg:.0f}" if not pd.isna(win_pvp_avg) else "—"
-                high_str     = _fmt_list(high_hours) if high_hours else "ninguna hora cara identificada"
-                cost_optimal = power_kw * len(opt_hours) * (win_pvp_avg or 0) / 1000
-                cost_peak    = power_kw * len(opt_hours) * pvp_max / 1000
+            saving = _estimate_saving_eur(power_kw, opt_hours, df_today, _window_avg_pvp(df_today, window_all))
 
-                reason = (
-                    f"La batería necesita {hours_needed}h de carga continua "
-                    f"({cap_kwh:.0f} kWh a {power_kw:.1f} kW). "
-                    f"El bloque óptimo es {_fmt_window(opt_hours)}: PVP medio "
-                    f"{win_pvp_str} €/MWh, coste total ~{cost_optimal:.2f} €. "
-                    f"Si se carga en pico ({high_str}, {pvp_max:.0f} €/MWh) el mismo "
-                    f"ciclo costaría ~{cost_peak:.2f} € — {cost_peak/max(cost_optimal,0.01):.1f}x más caro. "
-                    f"Conectar el cargador antes de las {opt_hours[0]:02d}h y no desenchufar "
-                    f"hasta las {opt_hours[-1]:02d}h para que el BMS complete el ciclo "
-                    f"de balanceo de celdas sin interrupciones."
-                )
-                cost_vs_peak = round(power_kw * len(opt_hours) * (pvp_max - (win_pvp_avg or pvp_max)) / 1000, 2)
-                saving_tag = f"Evitas ~{_fmt_eur(abs(cost_vs_peak))} vs cargar en pico ({pvp_max:.0f} €/MWh)"
-                saving_eur = abs(cost_vs_peak)
-            else:
-                # Modo honesto: sin PVP, usamos FV como referencia
-                solar_in_opt = [h for h in opt_hours if h in solar_hours]
-                solar_pct = len(solar_in_opt) / len(opt_hours) * 100 if opt_hours else 0
+            win_pvp_avg  = df_today[df_today["hour"].isin(opt_hours)]["price_pvpc_eur_mwh"].mean()
+            win_pvp_str  = f"{win_pvp_avg:.0f}" if not pd.isna(win_pvp_avg) else "—"
+            high_str     = _fmt_list(high_hours) if high_hours else "ninguna hora cara identificada"
+            cost_optimal = power_kw * len(opt_hours) * (win_pvp_avg or 0) / 1000
+            cost_peak    = power_kw * len(opt_hours) * pvp_max / 1000
 
-                reason = (
-                    f"La batería necesita {hours_needed}h de carga continua "
-                    f"({cap_kwh:.0f} kWh a {power_kw:.1f} kW). "
-                    f"El bloque óptimo es {_fmt_window(opt_hours)}. "
-                    f"⚠ Sin datos de precio de mercado (PVP) disponibles. "
-                    f"No se puede calcular ahorro económico. "
-                    f"{solar_pct:.0f}% de las horas seleccionadas coinciden con generación FV "
-                    f"(autoconsumo potencial). "
-                    f"Conectar el cargador antes de las {opt_hours[0]:02d}h y no desenchufar "
-                    f"hasta las {opt_hours[-1]:02d}h para que el BMS complete el ciclo "
-                    f"de balanceo de celdas sin interrupciones."
-                )
-                saving_tag = "Sin datos PVP — ahorro no calculable"
-                saving_eur = 0.0
+            reason = (
+                f"La batería necesita {hours_needed}h de carga continua "
+                f"({cap_kwh:.0f} kWh a {power_kw:.1f} kW). "
+                f"El bloque óptimo es {_fmt_window(opt_hours)}: PVP medio "
+                f"{win_pvp_str} €/MWh, coste total ~{cost_optimal:.2f} €. "
+                f"Si se carga en pico ({high_str}, {pvp_max:.0f} €/MWh) el mismo "
+                f"ciclo costaría ~{cost_peak:.2f} € — {cost_peak/max(cost_optimal,0.01):.1f}x más caro. "
+                f"Conectar el cargador antes de las {opt_hours[0]:02d}h y no desenchufar "
+                f"hasta las {opt_hours[-1]:02d}h para que el BMS complete el ciclo "
+                f"de balanceo de celdas sin interrupciones."
+            )
+
+            # Ahorro concreto: coste del ciclo en el bloque óptimo vs en la hora pico.
+            # Siempre > 0 porque opt_hours es el bloque más barato de la ventana
+            # y pvp_max es siempre ≥ win_pvp_avg.
+            cost_vs_peak = round(power_kw * len(opt_hours) * (pvp_max - (win_pvp_avg or pvp_max)) / 1000, 2)
 
             decisions.append({
                 "asset_id":    asset_id,
@@ -468,8 +447,8 @@ def _build_decisions(df_today: pd.DataFrame, df_assets: pd.DataFrame) -> list[di
                 "time_window": _fmt_window(opt_hours),
                 "action":      "Programar carga batería — bloque óptimo continuo",
                 "reason":      reason,
-                "saving_tag":  saving_tag,
-                "saving_eur":  saving_eur,
+                "saving_tag":  f"Evitas ~{_fmt_eur(abs(cost_vs_peak))} vs cargar en pico ({pvp_max:.0f} €/MWh)",
+                "saving_eur":  abs(cost_vs_peak),
                 "urgency":     "critical",
                 "flex_window_label": _fmt_flex_window_label(ws, we),
             })
@@ -491,41 +470,26 @@ def _build_decisions(df_today: pd.DataFrame, df_assets: pd.DataFrame) -> list[di
             if not opt_hours:
                 continue
 
-            if has_pvp:
-                saving       = _estimate_saving_eur(power_kw, opt_hours, df_today, _window_avg_pvp(df_today, window_all))
-                win_pvp_avg  = df_today[df_today["hour"].isin(opt_hours)]["price_pvpc_eur_mwh"].mean()
-                mode_str     = f"precio mínimo de red {win_pvp_avg:.0f} €/MWh"
-                high_str     = _fmt_list(high_hours) if high_hours else "—"
-                cost_compressor_peak = power_kw * len(high_hours) * pvp_max / 1000
+            saving       = _estimate_saving_eur(power_kw, opt_hours, df_today, _window_avg_pvp(df_today, window_all))
+            win_pvp_avg  = df_today[df_today["hour"].isin(opt_hours)]["price_pvpc_eur_mwh"].mean()
+            # La FV reduce la importación de red pero NO hace que las horas solares
+            # sean gratuitas: la fábrica consume más de lo que genera en todo momento.
+            # El mensaje correcto es el precio de red que se paga en esa ventana.
+            solar_in_win = [h for h in opt_hours if h in solar_hours]
+            mode_str     = f"precio mínimo de red {win_pvp_avg:.0f} €/MWh"
+            high_str     = _fmt_list(high_hours) if high_hours else "—"
+            cost_compressor_peak = power_kw * len(high_hours) * pvp_max / 1000
 
-                reason = (
-                    f"Bajar consigna de temperatura 1–2°C durante {_fmt_window(opt_hours)} "
-                    f"aprovechando {mode_str}. "
-                    f"La masa térmica de la cámara absorbe el frío extra y mantiene la "
-                    f"temperatura de seguridad durante {len(high_hours)}h de pico sin arranques. "
-                    f"Si el compresor trabajara a plena carga en {high_str} "
-                    f"({pvp_max:.0f} €/MWh) consumiría ~{cost_compressor_peak:.2f} € "
-                    f"solo en esa franja. Cada arranque evitado en pico ahorra también "
-                    f"desgaste mecánico — el arranque es el momento de mayor estrés del compresor."
-                )
-                saving_tag = f"Ahorro ~{_fmt_eur(saving)}/día"
-                saving_eur = saving
-            else:
-                solar_in_opt = [h for h in opt_hours if h in solar_hours]
-                solar_pct = len(solar_in_opt) / len(opt_hours) * 100 if opt_hours else 0
-
-                reason = (
-                    f"Bajar consigna de temperatura 1–2°C durante {_fmt_window(opt_hours)}. "
-                    f"⚠ Sin datos de precio de mercado (PVP) disponibles. "
-                    f"No se puede calcular ahorro económico. "
-                    f"{solar_pct:.0f}% de las horas seleccionadas coinciden con generación FV "
-                    f"(autoconsumo potencial). "
-                    f"La masa térmica de la cámara absorbe el frío extra y mantiene la "
-                    f"temperatura de seguridad durante las horas siguientes sin arranques. "
-                    f"Cada arranque evitado ahorra desgaste mecánico del compresor."
-                )
-                saving_tag = "Sin datos PVP — ahorro no calculable"
-                saving_eur = 0.0
+            reason = (
+                f"Bajar consigna de temperatura 1–2°C durante {_fmt_window(opt_hours)} "
+                f"aprovechando {mode_str}. "
+                f"La masa térmica de la cámara absorbe el frío extra y mantiene la "
+                f"temperatura de seguridad durante {len(high_hours)}h de pico sin arranques. "
+                f"Si el compresor trabajara a plena carga en {high_str} "
+                f"({pvp_max:.0f} €/MWh) consumiría ~{cost_compressor_peak:.2f} € "
+                f"solo en esa franja. Cada arranque evitado en pico ahorra también "
+                f"desgaste mecánico — el arranque es el momento de mayor estrés del compresor."
+            )
 
             decisions.append({
                 "asset_id":    asset_id,
@@ -535,8 +499,8 @@ def _build_decisions(df_today: pd.DataFrame, df_assets: pd.DataFrame) -> list[di
                 "time_window": _fmt_window(opt_hours),
                 "action":      "Pre-enfriamiento pull-down en ventana solar o barata",
                 "reason":      reason,
-                "saving_tag":  saving_tag,
-                "saving_eur":  saving_eur,
+                "saving_tag":  f"Ahorro ~{_fmt_eur(saving)}/día",
+                "saving_eur":  saving,
                 "urgency":     "high",
                 "flex_window_label": _fmt_flex_window_label(ws, we),
             })
@@ -552,44 +516,22 @@ def _build_decisions(df_today: pd.DataFrame, df_assets: pd.DataFrame) -> list[di
             if not opt_hours:
                 continue
 
-            if has_pvp:
-                saving      = _estimate_saving_eur(power_kw, opt_hours, df_today, _window_avg_pvp(df_today, window_all))
-                win_pvp_avg = df_today[df_today["hour"].isin(opt_hours)]["price_pvpc_eur_mwh"].mean()
-                high_str    = _fmt_list(high_hours) if high_hours else "—"
+            saving      = _estimate_saving_eur(power_kw, opt_hours, df_today, _window_avg_pvp(df_today, window_all))
+            win_pvp_avg = df_today[df_today["hour"].isin(opt_hours)]["price_pvpc_eur_mwh"].mean()
+            high_str    = _fmt_list(high_hours) if high_hours else "—"
 
-                reason = (
-                    f"Arrancar el compresor y ejecutar purga de condensados + revisión "
-                    f"de filtros durante {_fmt_window(opt_hours)} "
-                    f"(PVP ~{win_pvp_avg:.0f} €/MWh). "
-                    f"El pico de corriente en el arranque del motor ({power_kw:.1f} kW) "
-                    f"es 5–7x la corriente nominal durante 2–3 segundos — si ese arranque "
-                    f"coincide con {high_str} ({pvp_max:.0f} €/MWh) el impacto en la "
-                    f"factura de término de potencia puede ser desproporcionado. "
-                    f"Mantenimiento en esta ventana no afecta a la presión del circuito "
-                    f"de producción porque el depósito buffer aguanta la demanda mientras "
-                    f"el compresor está en modo purga."
-                )
-                saving_tag = f"Ahorro ~{_fmt_eur(saving)}/día"
-                saving_eur = saving
-            else:
-                solar_in_opt = [h for h in opt_hours if h in solar_hours]
-                solar_pct = len(solar_in_opt) / len(opt_hours) * 100 if opt_hours else 0
-
-                reason = (
-                    f"Arrancar el compresor y ejecutar purga de condensados + revisión "
-                    f"de filtros durante {_fmt_window(opt_hours)}. "
-                    f"⚠ Sin datos de precio de mercado (PVP) disponibles. "
-                    f"No se puede calcular ahorro económico. "
-                    f"{solar_pct:.0f}% de las horas seleccionadas coinciden con generación FV "
-                    f"(autoconsumo potencial). "
-                    f"El pico de corriente en el arranque del motor ({power_kw:.1f} kW) "
-                    f"es 5–7x la corriente nominal durante 2–3 segundos. "
-                    f"Mantenimiento en esta ventana no afecta a la presión del circuito "
-                    f"de producción porque el depósito buffer aguanta la demanda mientras "
-                    f"el compresor está en modo purga."
-                )
-                saving_tag = "Sin datos PVP — ahorro no calculable"
-                saving_eur = 0.0
+            reason = (
+                f"Arrancar el compresor y ejecutar purga de condensados + revisión "
+                f"de filtros durante {_fmt_window(opt_hours)} "
+                f"(PVP ~{win_pvp_avg:.0f} €/MWh). "
+                f"El pico de corriente en el arranque del motor ({power_kw:.1f} kW) "
+                f"es 5–7x la corriente nominal durante 2–3 segundos — si ese arranque "
+                f"coincide con {high_str} ({pvp_max:.0f} €/MWh) el impacto en la "
+                f"factura de término de potencia puede ser desproporcionado. "
+                f"Mantenimiento en esta ventana no afecta a la presión del circuito "
+                f"de producción porque el depósito buffer aguanta la demanda mientras "
+                f"el compresor está en modo purga."
+            )
 
             decisions.append({
                 "asset_id":    asset_id,
@@ -599,8 +541,8 @@ def _build_decisions(df_today: pd.DataFrame, df_assets: pd.DataFrame) -> list[di
                 "time_window": _fmt_window(opt_hours),
                 "action":      "Programar arranque y mantenimiento en ventana económica",
                 "reason":      reason,
-                "saving_tag":  saving_tag,
-                "saving_eur":  saving_eur,
+                "saving_tag":  f"Ahorro ~{_fmt_eur(saving)}/día",
+                "saving_eur":  saving,
                 "urgency":     "medium",
                 "flex_window_label": _fmt_flex_window_label(ws, we),
             })
@@ -616,41 +558,26 @@ def _build_decisions(df_today: pd.DataFrame, df_assets: pd.DataFrame) -> list[di
             if not opt_hours:
                 continue
 
-            if has_pvp:
-                saving       = _estimate_saving_eur(power_kw, opt_hours, df_today, _window_avg_pvp(df_today, window_all))
-                win_pvp_avg  = df_today[df_today["hour"].isin(opt_hours)]["price_pvpc_eur_mwh"].mean()
-                high_str     = _fmt_list(high_hours) if high_hours else "—"
-                avoid_h      = min(high_hours) if high_hours else 22
-                cost_if_peak = power_kw * len(opt_hours) * pvp_max / 1000
+            saving       = _estimate_saving_eur(power_kw, opt_hours, df_today, _window_avg_pvp(df_today, window_all))
+            win_pvp_avg  = df_today[df_today["hour"].isin(opt_hours)]["price_pvpc_eur_mwh"].mean()
+            # Misma lógica: solar reduce importación pero no es coste cero porque
+            # la demanda basal de las líneas de producción supera siempre la generación FV.
+            solar_in_win = [h for h in opt_hours if h in solar_hours]
+            mode_str     = f"precio mínimo de red {win_pvp_avg:.0f} €/MWh"
+            high_str     = _fmt_list(high_hours) if high_hours else "—"
+            avoid_h      = min(high_hours) if high_hours else 22
+            cost_if_peak = power_kw * len(opt_hours) * pvp_max / 1000
 
-                reason = (
-                    f"Operar bombas durante {_fmt_window(opt_hours)} aprovechando "
-                    f"precio mínimo de red {win_pvp_avg:.0f} €/MWh. "
-                    f"Con el depósito lleno antes de las {avoid_h:02d}h, los arranques "
-                    f"de bomba en la franja cara ({high_str}, {pvp_max:.0f} €/MWh) "
-                    f"se reducen o eliminan completamente. "
-                    f"Operar el mismo tiempo en pico costaría ~{cost_if_peak:.2f} € — "
-                    f"en ventana solar/barata ese coste se reduce a ~{saving:.2f} € de ahorro neto. "
-                    f"El caudal bombeado es el mismo; solo cambia cuándo se hace."
-                )
-                saving_tag = f"Ahorro ~{_fmt_eur(saving)}/día"
-                saving_eur = saving
-            else:
-                solar_in_opt = [h for h in opt_hours if h in solar_hours]
-                solar_pct = len(solar_in_opt) / len(opt_hours) * 100 if opt_hours else 0
-
-                reason = (
-                    f"Operar bombas durante {_fmt_window(opt_hours)}. "
-                    f"⚠ Sin datos de precio de mercado (PVP) disponibles. "
-                    f"No se puede calcular ahorro económico. "
-                    f"{solar_pct:.0f}% de las horas seleccionadas coinciden con generación FV "
-                    f"(autoconsumo potencial). "
-                    f"Con el depósito lleno antes de las horas de mayor demanda, los arranques "
-                    f"de bomba en franjas de alto consumo se reducen. "
-                    f"El caudal bombeado es el mismo; solo cambia cuándo se hace."
-                )
-                saving_tag = "Sin datos PVP — ahorro no calculable"
-                saving_eur = 0.0
+            reason = (
+                f"Operar bombas durante {_fmt_window(opt_hours)} aprovechando "
+                f"{mode_str}. "
+                f"Con el depósito lleno antes de las {avoid_h:02d}h, los arranques "
+                f"de bomba en la franja cara ({high_str}, {pvp_max:.0f} €/MWh) "
+                f"se reducen o eliminan completamente. "
+                f"Operar el mismo tiempo en pico costaría ~{cost_if_peak:.2f} € — "
+                f"en ventana solar/barata ese coste se reduce a ~{saving:.2f} € de ahorro neto. "
+                f"El caudal bombeado es el mismo; solo cambia cuándo se hace."
+            )
 
             decisions.append({
                 "asset_id":    asset_id,
@@ -660,8 +587,8 @@ def _build_decisions(df_today: pd.DataFrame, df_assets: pd.DataFrame) -> list[di
                 "time_window": _fmt_window(opt_hours),
                 "action":      "Llenar depósito de proceso en horario solar/barato",
                 "reason":      reason,
-                "saving_tag":  saving_tag,
-                "saving_eur":  saving_eur,
+                "saving_tag":  f"Ahorro ~{_fmt_eur(saving)}/día",
+                "saving_eur":  saving,
                 "urgency":     "medium",
                 "flex_window_label": _fmt_flex_window_label(ws, we),
             })
@@ -677,41 +604,21 @@ def _build_decisions(df_today: pd.DataFrame, df_assets: pd.DataFrame) -> list[di
             if not opt_hours:
                 continue
 
-            if has_pvp:
-                saving       = _estimate_saving_eur(power_kw, opt_hours, df_today, _window_avg_pvp(df_today, window_all))
-                win_pvp_avg  = df_today[df_today["hour"].isin(opt_hours)]["price_pvpc_eur_mwh"].mean()
-                fv_cover_pct = min(100, int(pv_peak_kw / max(power_kw, 0.1) * 100))
-                cost_if_peak = power_kw * len(opt_hours) * pvp_max / 1000
+            saving       = _estimate_saving_eur(power_kw, opt_hours, df_today, _window_avg_pvp(df_today, window_all))
+            win_pvp_avg  = df_today[df_today["hour"].isin(opt_hours)]["price_pvpc_eur_mwh"].mean()
+            fv_cover_pct = min(100, int(pv_peak_kw / max(power_kw, 0.1) * 100))
+            cost_if_peak = power_kw * len(opt_hours) * pvp_max / 1000
 
-                reason = (
-                    f"Programar ciclos de esterilización durante {_fmt_window(opt_hours)} "
-                    f"(PVP ~{win_pvp_avg:.0f} €/MWh). "
-                    f"La instalación FV cubre hasta el {fv_cover_pct}% del consumo del equipo "
-                    f"en las horas de máxima generación ({pv_peak_kw:.1f} kW FV pico a las "
-                    f"{pv_peak_h:02d}h vs {power_kw:.1f} kW del autoclave). "
-                    f"Un ciclo equivalente en pico ({pvp_max:.0f} €/MWh) costaría "
-                    f"~{cost_if_peak:.2f} € — ahorro directo de {_fmt_eur(saving)} "
-                    f"por reorganizar el turno. No arrancar en {_fmt_list(high_hours)}."
-                )
-                saving_tag = f"Ahorro ~{_fmt_eur(saving)}/día"
-                saving_eur = saving
-            else:
-                solar_in_opt = [h for h in opt_hours if h in solar_hours]
-                solar_pct = len(solar_in_opt) / len(opt_hours) * 100 if opt_hours else 0
-                fv_cover_pct = min(100, int(pv_peak_kw / max(power_kw, 0.1) * 100))
-
-                reason = (
-                    f"Programar ciclos de esterilización durante {_fmt_window(opt_hours)}. "
-                    f"⚠ Sin datos de precio de mercado (PVP) disponibles. "
-                    f"No se puede calcular ahorro económico. "
-                    f"La instalación FV cubre hasta el {fv_cover_pct}% del consumo del equipo "
-                    f"en las horas de máxima generación ({pv_peak_kw:.1f} kW FV pico a las "
-                    f"{pv_peak_h:02d}h vs {power_kw:.1f} kW del autoclave). "
-                    f"{solar_pct:.0f}% de las horas seleccionadas coinciden con generación FV "
-                    f"(autoconsumo potencial). No arrancar en horas de mayor demanda de red."
-                )
-                saving_tag = "Sin datos PVP — ahorro no calculable"
-                saving_eur = 0.0
+            reason = (
+                f"Programar ciclos de esterilización durante {_fmt_window(opt_hours)} "
+                f"(PVP ~{win_pvp_avg:.0f} €/MWh). "
+                f"La instalación FV cubre hasta el {fv_cover_pct}% del consumo del equipo "
+                f"en las horas de máxima generación ({pv_peak_kw:.1f} kW FV pico a las "
+                f"{pv_peak_h:02d}h vs {power_kw:.1f} kW del autoclave). "
+                f"Un ciclo equivalente en pico ({pvp_max:.0f} €/MWh) costaría "
+                f"~{cost_if_peak:.2f} € — ahorro directo de {_fmt_eur(saving)} "
+                f"por reorganizar el turno. No arrancar en {_fmt_list(high_hours)}."
+            )
 
             decisions.append({
                 "asset_id":    asset_id,
@@ -721,8 +628,8 @@ def _build_decisions(df_today: pd.DataFrame, df_assets: pd.DataFrame) -> list[di
                 "time_window": _fmt_window(opt_hours),
                 "action":      "Concentrar ciclos largos en turno solar/barato",
                 "reason":      reason,
-                "saving_tag":  saving_tag,
-                "saving_eur":  saving_eur,
+                "saving_tag":  f"Ahorro ~{_fmt_eur(saving)}/día",
+                "saving_eur":  saving,
                 "urgency":     "high",
                 "flex_window_label": _fmt_flex_window_label(ws, we),
             })
@@ -731,115 +638,71 @@ def _build_decisions(df_today: pd.DataFrame, df_assets: pd.DataFrame) -> list[di
         elif atype == "lighting":
             if not high_hours:
                 continue
+            cost_if_on  = sum(
+                df_today[df_today["hour"].isin(high_hours)]["price_pvpc_eur_mwh"].dropna()
+            ) * power_kw / 1000.0
+            saving_real = round(cost_if_on * 0.30, 3)  # 30% zonas no productivas apagables
 
-            if has_pvp:
-                cost_if_on  = sum(
-                    df_today[df_today["hour"].isin(high_hours)]["price_pvpc_eur_mwh"].dropna()
-                ) * power_kw / 1000.0
-                saving_real = round(cost_if_on * 0.30, 3)  # 30% zonas no productivas apagables
+            if saving_real < MIN_SAVING_EUR:
+                continue
 
-                if saving_real < MIN_SAVING_EUR:
-                    continue
-
-                reason = (
-                    f"El precio alcanza {pvp_max:.0f} €/MWh en {_fmt_list(high_hours)}. "
-                    f"Mantener {power_kw:.1f} kW de iluminación total en esas horas "
-                    f"cuesta ~{cost_if_on:.2f} €. "
-                    f"Apagando el 30% de zonas no productivas (pasillos, vestuarios, "
-                    f"almacén secundario) se evitan ~{saving_real:.2f} € sin impacto "
-                    f"en operaciones. En horas solares ({_fmt_window(solar_hours)}) "
-                    f"la iluminación está cubierta por FV propia — sin coste de red."
-                )
-                saving_tag = f"Ahorro ~{_fmt_eur(saving_real)}/día"
-                saving_eur = saving_real
-            else:
-                # Sin PVP, no sabemos qué horas son caras. Usamos FV como proxy.
-                # Recomendamos apagar en horas NO solares (cuando FV no cubre).
-                non_solar_hours = [h for h in range(24) if h not in solar_hours]
-                if not non_solar_hours:
-                    continue
-
-                reason = (
-                    f"⚠ Sin datos de precio de mercado (PVP) disponibles. "
-                    f"No se pueden identificar horas pico de precio. "
-                    f"Recomendación basada en generación FV: en {_fmt_list(non_solar_hours)} "
-                    f"la iluminación consume 100% de red (sin autoconsumo). "
-                    f"Apagando el 30% de zonas no productivas (pasillos, vestuarios, "
-                    f"almacén secundario) se reduce consumo de red en esas horas. "
-                    f"En horas solares ({_fmt_window(solar_hours)}) "
-                    f"la iluminación está cubierta por FV propia."
-                )
-                saving_tag = "Sin datos PVP — ahorro no calculable"
-                saving_eur = 0.0
+            reason = (
+                f"El precio alcanza {pvp_max:.0f} €/MWh en {_fmt_list(high_hours)}. "
+                f"Mantener {power_kw:.1f} kW de iluminación total en esas horas "
+                f"cuesta ~{cost_if_on:.2f} €. "
+                f"Apagando el 30% de zonas no productivas (pasillos, vestuarios, "
+                f"almacén secundario) se evitan ~{saving_real:.2f} € sin impacto "
+                f"en operaciones. En horas solares ({_fmt_window(solar_hours)}) "
+                f"la iluminación está cubierta por FV propia — sin coste de red."
+            )
 
             decisions.append({
                 "asset_id":    asset_id,
                 "asset_name":  name,
                 "asset_type":  atype,
                 "priority":    priority + 10,
-                "time_window": _fmt_list(high_hours) if has_pvp else _fmt_list(non_solar_hours),
+                "time_window": _fmt_list(high_hours),
                 "action":      "Apagar iluminación no esencial en horas pico",
                 "reason":      reason,
-                "saving_tag":  saving_tag,
-                "saving_eur":  saving_eur,
+                "saving_tag":  f"Ahorro ~{_fmt_eur(saving_real)}/día",
+                "saving_eur":  saving_real,
                 "urgency":     "low",
                 "flex_window_label": _fmt_flex_window_label(ws, we),
             })
 
         # ── ACTIVOS NO FLEXIBLES: ALERTA DE COINCIDENCIA EN PICO ─────────────
         elif not flexible:
-            if has_pvp:
-                if not high_hours:
-                    continue
-                high_cost = sum(
-                    df_today[df_today["hour"].isin(high_hours)]["price_pvpc_eur_mwh"].dropna()
-                ) * power_kw / 1000.0
+            if not high_hours:
+                continue
+            high_cost = sum(
+                df_today[df_today["hour"].isin(high_hours)]["price_pvpc_eur_mwh"].dropna()
+            ) * power_kw / 1000.0
 
-                # Consumo previsto de fábrica en esas horas para dar contexto de potencia
-                factory_kw_peak = df_today[df_today["hour"].isin(high_hours)][
-                    "power_consumption_kw"].mean()
+            # Consumo previsto de fábrica en esas horas para dar contexto de potencia
+            factory_kw_peak = df_today[df_today["hour"].isin(high_hours)][
+                "power_consumption_kw"].mean()
 
-                reason = (
-                    f"Activo no desplazable: operará {power_kw:.1f} kW en pico "
-                    f"({_fmt_list(high_hours)}, hasta {pvp_max:.0f} €/MWh). "
-                    f"Coste estimado solo en esa franja: ~{high_cost:.2f} €. "
-                    f"La demanda prevista de fábrica en esas horas es "
-                    f"~{factory_kw_peak:.0f} kW — este equipo representa el "
-                    f"{min(100, int(power_kw/max(factory_kw_peak,1)*100))}% de esa demanda. "
-                    f"Evitar arrancar otros flexibles simultáneamente para no disparar "
-                    f"el máximo de potencia registrado en el periodo de facturación."
-                )
-                saving_tag = "Alerta pico"
-                saving_eur = 0.0
-            else:
-                # Sin PVP, alerta basada en horas de mayor consumo de fábrica
-                peak_consumption_hours = df_today.nlargest(4, "power_consumption_kw")["hour"].tolist()
-                factory_kw_peak = df_today[df_today["hour"].isin(peak_consumption_hours)][
-                    "power_consumption_kw"].mean()
-
-                reason = (
-                    f"Activo no desplazable: operará {power_kw:.1f} kW. "
-                    f"⚠ Sin datos de precio de mercado (PVP) disponibles. "
-                    f"No se puede calcular coste estimado. "
-                    f"Las horas de mayor consumo previsto de fábrica son {_fmt_list(peak_consumption_hours)} "
-                    f"(~{factory_kw_peak:.0f} kW medio). Este equipo representa el "
-                    f"{min(100, int(power_kw/max(factory_kw_peak,1)*100))}% de esa demanda. "
-                    f"Evitar arrancar otros flexibles simultáneamente en esas horas "
-                    f"para no disparar el máximo de potencia registrado."
-                )
-                saving_tag = "Alerta consumo (sin PVP)"
-                saving_eur = 0.0
+            reason = (
+                f"Activo no desplazable: operará {power_kw:.1f} kW en pico "
+                f"({_fmt_list(high_hours)}, hasta {pvp_max:.0f} €/MWh). "
+                f"Coste estimado solo en esa franja: ~{high_cost:.2f} €. "
+                f"La demanda prevista de fábrica en esas horas es "
+                f"~{factory_kw_peak:.0f} kW — este equipo representa el "
+                f"{min(100, int(power_kw/max(factory_kw_peak,1)*100))}% de esa demanda. "
+                f"Evitar arrancar otros flexibles simultáneamente para no disparar "
+                f"el máximo de potencia registrado en el periodo de facturación."
+            )
 
             decisions.append({
                 "asset_id":    asset_id,
                 "asset_name":  name,
                 "asset_type":  atype,
                 "priority":    priority + 50,
-                "time_window": _fmt_list(high_hours) if has_pvp else _fmt_list(peak_consumption_hours),
+                "time_window": _fmt_list(high_hours),
                 "action":      "Monitorizar consumo — activo no flexible",
                 "reason":      reason,
-                "saving_tag":  saving_tag,
-                "saving_eur":  saving_eur,
+                "saving_tag":  "Alerta pico",
+                "saving_eur":  0.0,
                 "urgency":     "low",
                 "flex_window_label": _fmt_flex_window_label(ws, we),
             })
@@ -884,11 +747,7 @@ def _opportunity_index(df_today: pd.DataFrame, decisions: list[dict]) -> int:
     """
     has_pvp = df_today["has_pvp"].any()
     if not has_pvp:
-        # Sin PVP, el índice se basa solo en FV y no calcula componente de spread
-        hours_solar  = int((df_today["pv_power_gen_kw"] >= PV_ACTIVE_KW).sum())
-        score_solar  = min(35, hours_solar * 3.5)
-        # Sin PVP no hay ahorro calculable en €, pero damos puntos por tener FV
-        return min(100, int(score_solar + 30))  # 30 pts base por disponibilidad de datos FV
+        return 30
 
     spread       = df_today["price_pvpc_eur_mwh"].max() - df_today["price_pvpc_eur_mwh"].min()
     hours_solar  = int((df_today["pv_power_gen_kw"] >= PV_ACTIVE_KW).sum())
@@ -982,7 +841,7 @@ def build_energy_decisions(client_id: str) -> dict[str, Any]:
     Punto de entrada principal. target_date = mañana (today + 1).
     Devuelve el dict completo de decisiones listo para report_generator.
     """
-    logger.info("[INIT] ── build_energy_decisions v2.1-honest — cliente: %s ──", client_id)
+    logger.info("[INIT] ── build_energy_decisions v2.1 — cliente: %s ──", client_id)
 
     engine      = get_engine()
     target_date = date.today() + timedelta(days=1)
@@ -1034,7 +893,7 @@ def build_energy_decisions(client_id: str) -> dict[str, Any]:
     }
 
     logger.info(
-        "[DONE] v2.1-honest — %d decisiones, ahorro ~%.2f €, oportunidad %d/100",
+        "[DONE] v2.1 — %d decisiones, ahorro ~%.2f €, oportunidad %d/100",
         len(decisions), total_saving, opp_index,
     )
     return result
